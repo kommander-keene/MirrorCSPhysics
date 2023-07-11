@@ -2,10 +2,12 @@
 // comment out the below line to quickly revert the onlySyncOnChange feature
 #define onlySyncOnChange_BANDWIDTH_SAVING
 using UnityEngine;
-
+using System.Collections;
+using System.Collections.Generic;
+using System;
 namespace Mirror
 {
-    [AddComponentMenu("Network/Network Transform (Unreliable)")]
+    [AddComponentMenu("Network/Network Command Transform")]
     public class NetworkCCmd : NetworkTransformBase
     {
         // only sync when changed hack /////////////////////////////////////////
@@ -27,12 +29,20 @@ namespace Mirror
         protected bool rotationChanged;
         protected bool scaleChanged;
 
-        // Used to store last sent snapshots
+        #region PredictionAndReconciliation
         protected TransformSnapshot lastSnapshot;
         protected bool cachedSnapshotComparison;
         protected bool hasSentUnchangedPosition;
-#endif
+        public const int MAX_INPUT_QUEUE = 1024;
 
+        SortedList<double, InputCmd> InputQueue;
+        List<double> TestList = new List<double>();
+        int snapshotAge = 0;
+        SortedList<double, TRS_Snapshot> SnapshotQueue = new SortedList<double, TRS_Snapshot>();
+
+        #endregion
+#endif
+        public GameObject MirrorPrefab;
         double lastClientSendTime;
         public double lastServerSendTime;
 
@@ -58,65 +68,92 @@ namespace Mirror
         // When everything works, we are receiving NT snapshots every 10 frames, but start interpolating after 2. 
         // Even if I assume we had 2 snapshots to begin with to start interpolating (which we don't), by the time we reach 13th frame, we are out of snapshots, and have to wait 7 frames for next snapshot to come. This is the reason why we absolutely need the timestamp adjustment. We are starting way too early to interpolate. 
         //
-
+        System.Random rand;
+        private int RandNext()
+        {
+            if (rand == null)
+            {
+                rand = new System.Random();
+            }
+            return rand.Next();
+        }
         // Keene
         InputCmd currentCmd;
+        GameObject mirrorPrefab;
+        GameObject mirrorClone;
+        int numberCommands = 100;
+        List<InputCmd> ReplayCommands = new List<InputCmd>();
         bool down = false;
-        double start = double.MaxValue;
-        double end = double.MinValue;
+        int deltaCmdCount;
+        int cmdCount;
+        public float errorMargin;
+        public IController controller;
         public void InputDown(InputCmd cmd)
         {
             currentCmd = cmd;
-            start = NetworkTime.localTime < start ? NetworkTime.localTime : start;
-            end = double.MinValue;
+            cmd.ticks = -1;
+            deltaCmdCount += 1;
+            cmdCount += 1;
             down = true;
         }
+        public void InputUp()
+        {
+            down = false;
+        }
 
+        public void SetController(IController ctrl)
+        {
+            controller = ctrl;
+        }
         public InputCmd CurrentCmd()
         {
             return currentCmd;
         }
 
-        public bool MostRecentCmd()
-        {
-            return end < NetworkTime.localTime;
-        }
-        public void InputUp()
-        {
-            currentCmd.duration = (float)(NetworkTime.localTime - start);
-            down = false;
-            end = NetworkTime.localTime > end ? NetworkTime.localTime : end;
-            start = double.MaxValue; // Reset the start value stuff
-        }
-
-        public void Chop()
-        {
-            // Cut off cummand. Reset it
-            currentCmd.duration = (float)(NetworkTime.localTime - start);
-            start = NetworkTime.localTime;
-        }
-
         double timeStampAdjustment => NetworkServer.sendInterval * (sendIntervalMultiplier - 1);
         double offset => timelineOffset ? NetworkServer.sendInterval * sendIntervalMultiplier : 0;
 
+        protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
+        {
+            if (!down && SnapshotQueue.Count == 0 && ReplayCommands.Count == 0)
+            {
+                Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
+                Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
+                if (syncPosition)
+                    target.localPosition = interpolatePosition ? lerpedInterPosition : lerpedEndPosition;
 
+                if (syncRotation)
+                    target.localRotation = interpolateRotation ? interpolated.rotation : endGoal.rotation;
 
+                if (syncScale)
+                    target.localScale = interpolateScale ? interpolated.scale : endGoal.scale;
+            }
+        }
         // update //////////////////////////////////////////////////////////////
         // Update applies interpolation
         void Update()
         {
+
             if (isServer) UpdateServerInterpolation();
             // for all other clients (and for local player if !authority),
             // we need to apply snapshots from the buffer.
             // 'else if' because host mode shouldn't interpolate client
             else if (isClient && !IsClientWithAuthority) UpdateClientInterpolation();
         }
-
         // LateUpdate broadcasts.
         // movement scripts may change positions in Update.
         // use LateUpdate to ensure changes are detected in the same frame.
         // otherwise this may run before user update, delaying detection until next frame.
         // this could cause visible jitter.
+        double MostRecentKey()
+        {
+            int last = InputQueue.Count - 1;
+            return InputQueue.Keys[last];
+        }
+        InputCmd MostRecentCommand()
+        {
+            return InputQueue[MostRecentKey()];
+        }
         void LateUpdate()
         {
             // if server then always sync to others.
@@ -126,7 +163,223 @@ namespace Mirror
             // it is the server. don't overwrite anything there.
             else if (isClient && IsClientWithAuthority) UpdateClientBroadcast();
         }
-        private bool t_check_once = false;
+        int replayed = 0;
+        bool toReplay = false;
+        int replayed_ticks = 0;
+
+        void FixedUpdate()
+        {
+
+            if (isLocalPlayer && isClient)
+            {
+                //BROADCAST
+                BroadcastLocalInputs();
+            }
+            else if (isServer && !isLocalPlayer) // if I am the local player, then I shouldn't be receiving or redoing any commands
+            {
+                //RECIEVE (SERVER)
+                RecieveRemoteCommands();
+            }
+        }
+
+
+
+        InputCmd server_replayCmd;
+        double server_replayID;
+        double lastReplayedTime;
+        void RecieveRemoteCommands()
+        {
+            // RECIEVING AND REPLAYING COMMANDS FROM SERVER!!!
+            if (InputQueue.Count > 0)
+            {
+                // TODO still a minor bug where extremely button presses will cause mismatch.
+                // Extremely hard to reproduce, so ignore this for now. :(
+
+                if (replayed_ticks > 0)
+                {
+                    // Do the Input() command
+                    controller.ReplayingInputs(server_replayCmd.axis1, server_replayCmd.axis2);
+                    replayed_ticks -= 1;
+                    replayed += 1;
+                }
+                else
+                {
+                    //TODO Packets will be recieved asynchronously, so sometimes older packets will fall in. You might have to chuck these!
+                    toReplay = false;
+                    // Generate new endpoint to send back to client
+                    TRS_Snapshot replySnap = new TRS_Snapshot(target.transform.localPosition);
+                    lastReplayedTime = server_replayID; // To keep track of last replayed ID
+                    RpcRecvPosition(server_replayID, replySnap);
+                    InputQueue.Remove(server_replayID); // Pop the most recent action. Move onto the next one
+                                                        // Pop next one
+                    if (InputQueue.Count > 0)
+                    {
+                        if (InputQueue.Count > 0)
+                        {
+                            server_replayCmd = MostRecentCommand();
+                            server_replayID = MostRecentKey();
+
+                            bool outOfOrder = server_replayID < lastReplayedTime;
+
+                            while (InputQueue.Count > 0 && outOfOrder)
+                            {
+                                server_replayCmd = MostRecentCommand();
+                                server_replayID = MostRecentKey();
+                                InputQueue.Remove(server_replayID);
+
+                                print("Fixed!!!");
+                            }
+                        }
+                    }
+                }
+
+                if (!toReplay && InputQueue.Count > 0)
+                {
+                    // They are different so, it means we havent deducted from replayed ticks yet
+                    replayed_ticks = server_replayCmd.ticks;
+                    toReplay = true; // Set an id so this doesn't get hit twice
+                }
+            }
+        }
+        void BroadcastLocalInputs()
+        {
+            // Only executed on local clients
+            if (NetworkTime.localTime >= lastClientSendTime + NetworkClient.sendInterval)
+            {
+                InputCmd toSendCmd = CurrentCmd();
+
+                // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals
+                if (deltaCmdCount > 0)
+                {
+
+                    double time = Time.time;
+                    SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition));
+                    // Send the server command over (according to this the number of send commands should be accurate now)
+                    toSendCmd.ticks = deltaCmdCount;
+                    // Save the positions in my own lists
+                    if (ReplayCommands.Count < numberCommands)
+                    {
+                        ReplayCommands.Add(toSendCmd);
+                    }
+                    // keepentracken += 1;
+                    CmdUpdateInputLists(toSendCmd, time);
+                    deltaCmdCount = 0;
+                }
+                // Clear old snapshots and inputs
+                if (SnapshotQueue.Count > 0 && SnapshotQueue.Keys[SnapshotQueue.Count - 1] + snapshotAge * NetworkClient.sendInterval < NetworkTime.localTime)
+                {
+                    SnapshotQueue.Clear();
+                }
+                lastClientSendTime = NetworkTime.localTime;
+            }
+        }
+
+        [Command(channel = Channels.Unreliable)]
+        void CmdUpdateInputLists(InputCmd cmd, double id)
+        {
+            // if (cmd.ticks != 0)
+            // print(cmd.ticks);
+            if (InputQueue.Count < MAX_INPUT_QUEUE && !InputQueue.ContainsKey(id))
+                InputQueue.Add(id, cmd);
+
+            // FIGURED IT OUT! InputQueue seems to randomly be dropping some of my ids for some reason?
+            // print($"{this.gameObject.name} is adding a command to the input list");
+            // print($"SERVER: Adding command to input queue with id {id} {InputQueue.Count}");
+
+
+        }
+        #region Networked Physics
+        private void Rewind(TRS_Snapshot lastValid)
+        {
+            /**
+            * Rewind myself to my last valid state
+            * Do I have to rewind everything? Maybe.
+            */
+            if (ReplayCommands.Count == 0)
+            {
+                // Oopsies nothing to replay haha
+                return;
+            }
+            Vector3 before = this.transform.localPosition;
+            this.transform.localPosition = lastValid.position;
+            NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
+
+            NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
+            int iteration = ReplayCommands.Count - 1;
+
+            while (iteration >= 0)
+            {
+                InputCmd recent = ReplayCommands[iteration]; // Fetch the most recent ReplayCommand
+                controller.ReplayingInputs(recent.axis1, recent.axis2);
+                // Simulate it forwards by a delta time
+                manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
+                iteration -= 1;
+            }
+            NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
+            Vector3 finalPosition = this.transform.localPosition;
+            //TODO Smooth Position over the course of MULTIPLE FRAMES
+            this.transform.localPosition = Vector3.Slerp(before, finalPosition, 0.1f);
+
+            ReplayCommands.Clear();
+
+        }
+        #endregion
+        void DoPositionErrorCorrect(float a, TRS_Snapshot snap)
+        {
+            if (!isLocalPlayer) return;
+            // Run difference through some function that adjusts lerp coefficient based off how different you are
+            // this.transform.localPosition = snap.position;
+            Rewind(snap);
+
+        }
+        double lastRecievedTime = -1.0;
+        [ClientRpc(channel = Channels.Unreliable)]
+        void RpcRecvPosition(double id, TRS_Snapshot sv_snp)
+        {
+            if (!isLocalPlayer || !isClient) return;
+
+            TRS_Snapshot reff;
+
+            if (SnapshotQueue.TryGetValue(id, out reff))
+            {
+                // print($"SERVER POSITION: {sv_snp.position}");
+
+                // Its in the queue!
+                float mgerror = (sv_snp.position - reff.position).magnitude;
+                bool skip = false;
+                if (lastRecievedTime > id)
+                {
+                    lastRecievedTime = lastRecievedTime > id ? lastRecievedTime : id;
+                    skip = true;
+                }
+
+                if (!skip && mgerror > errorMargin)
+                {
+                    // print($"RECV: Comparing {reff.position} vs {snp.position}. {removed}");
+                    DoPositionErrorCorrect(mgerror, sv_snp);
+                    bool removed = SnapshotQueue.Remove(id);
+                    // Remove from list!
+                }
+                else
+                {
+                    ReplayCommands.Clear();
+                }
+
+
+                // Perform an error check, and if not, correct.
+                // To correct, just lerp between current position and hypothetical position
+            }
+            else
+            {
+                //print($"RECV: Position is not found. Correcting position...");
+                // Automatically perform corrections
+                DoPositionErrorCorrect(100, sv_snp);
+            }
+
+            // Compares the positions and determines whether or not we need to update or not...
+            // Need to go change the original changing function
+        }
+
         void UpdateServerBroadcast()
         {
             // broadcast to all clients each 'sendInterval'
@@ -161,7 +414,7 @@ namespace Mirror
             // TODO send same time that NetworkServer sends time snapshot?
 
             if (NetworkTime.localTime >= lastServerSendTime + NetworkServer.sendInterval && // same interval as time interpolation!
-                (syncDirection == SyncDirection.ServerToClient || IsClientWithAuthority))
+            (syncDirection == SyncDirection.ServerToClient || IsClientWithAuthority))
             {
                 // send snapshot without timestamp.
                 // receiver gets it from batch timestamp to save bandwidth.
@@ -179,12 +432,12 @@ namespace Mirror
                     syncScale && scaleChanged ? snapshot.scale : default(Vector3?)
                 );
 #else
-                RpcServerToClientSync(
-                    // only sync what the user wants to sync
-                    syncPosition ? snapshot.position : default(Vector3?),
-                    syncRotation ? snapshot.rotation : default(Quaternion?),
-                    syncScale ? snapshot.scale : default(Vector3?)
-                );
+RpcServerToClientSync(
+    // only sync what the user wants to sync
+    syncPosition ? snapshot.position : default(Vector3?),
+    syncRotation ? snapshot.rotation : default(Quaternion?),
+    syncScale ? snapshot.scale : default(Vector3?)
+);
 #endif
 
                 lastServerSendTime = NetworkTime.localTime;
@@ -202,6 +455,7 @@ namespace Mirror
             }
         }
 
+
         // IRRELEVANT
         void UpdateServerInterpolation()
         {
@@ -214,8 +468,8 @@ namespace Mirror
             // -> connectionToClient is briefly null after scene changes:
             //    https://github.com/MirrorNetworking/Mirror/issues/3329
             if (syncDirection == SyncDirection.ClientToServer &&
-                connectionToClient != null &&
-                !isOwned)
+            connectionToClient != null &&
+            !isOwned)
             {
                 if (serverSnapshots.Count == 0) return;
 
@@ -277,12 +531,12 @@ namespace Mirror
                     syncScale && scaleChanged ? snapshot.scale : default(Vector3?)
                 );
 #else
-                CmdClientToServerSync(
-                    // only sync what the user wants to sync
-                    syncPosition ? snapshot.position : default(Vector3?),
-                    syncRotation ? snapshot.rotation : default(Quaternion?),
-                    syncScale    ? snapshot.scale    : default(Vector3?)
-                );
+CmdClientToServerSync(
+    // only sync what the user wants to sync
+    syncPosition ? snapshot.position : default(Vector3?),
+    syncRotation ? snapshot.rotation : default(Quaternion?),
+    syncScale    ? snapshot.scale    : default(Vector3?)
+);
 #endif
 
                 lastClientSendTime = NetworkTime.localTime;
@@ -302,17 +556,17 @@ namespace Mirror
 
         void UpdateClientInterpolation()
         {
-            // only while we have snapshots
+            // only whileou we have snapshots
             if (clientSnapshots.Count == 0) return;
 
             // step the interpolation without touching time.
             // NetworkClient is responsible for time globally.
             SnapshotInterpolation.StepInterpolation(
-                clientSnapshots,
-                NetworkTime.time, // == NetworkClient.localTimeline from snapshot interpolation
-                out TransformSnapshot from,
-                out TransformSnapshot to,
-                out double t);
+            clientSnapshots,
+            NetworkTime.time, // == NetworkClient.localTimeline from snapshot interpolation
+            out TransformSnapshot from,
+            out TransformSnapshot to,
+            out double t);
 
             // interpolate & apply
             TransformSnapshot computed = TransformSnapshot.Interpolate(from, to, t);
@@ -330,6 +584,24 @@ namespace Mirror
                 if (syncRotation) writer.WriteQuaternion(target.localRotation);
                 if (syncScale) writer.WriteVector3(target.localScale);
             }
+
+            InputQueue = new SortedList<double, InputCmd>();
+
+        }
+
+        void Start()
+        {
+            if (isLocalPlayer)
+            {
+                if (NetworkPhysicsManager.instance != null)
+                {
+                    //Add a new object that is exclusively physics simulated
+                    uint netID = this.GetComponent<NetworkIdentity>().netId;
+                    bool success = NetworkPhysicsManager.instance.RegisterNetworkPhysicsObject(netID, this.gameObject, true);
+                    Debug.Assert(success);
+                }
+                //Add only myself, since we don't really care where the others are, we are not resimulating them.
+            }
         }
 
         public override void OnDeserialize(NetworkReader reader, bool initialState)
@@ -344,6 +616,7 @@ namespace Mirror
                 if (syncScale) target.localScale = reader.ReadVector3();
             }
         }
+
 
 #if onlySyncOnChange_BANDWIDTH_SAVING
         // Returns true if position, rotation AND scale are unchanged, within given sensitivity range.
@@ -404,7 +677,7 @@ namespace Mirror
         //IRRELEVANT
         [ClientRpc(channel = Channels.Unreliable)]
         void RpcServerToClientSync(Vector3? position, Quaternion? rotation, Vector3? scale) =>
-            OnServerToClientSync(position, rotation, scale);
+        OnServerToClientSync(position, rotation, scale);
 
         // server broadcasts sync message to all clients
         protected virtual void OnServerToClientSync(Vector3? position, Quaternion? rotation, Vector3? scale)
