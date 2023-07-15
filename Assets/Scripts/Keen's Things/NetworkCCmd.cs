@@ -70,6 +70,7 @@ namespace Mirror
         //
         // Keene
         InputCmd currentCmd;
+
         List<InputCmd> currentCmds = new List<InputCmd>();
         GameObject mirrorPrefab;
         GameObject mirrorClone;
@@ -80,6 +81,9 @@ namespace Mirror
         int cmdCount;
         public float errorMargin;
         public IController controller;
+
+        public int noInputUpdateRate = 3;
+        public float instaSnapError = 1;
         public void InputDown(InputCmd cmd)
         {
             if (InputCmd.Equals(cmd, currentCmd))
@@ -97,7 +101,7 @@ namespace Mirror
                     double time = currentCmd.timestamp;
                     if (!SnapshotQueue.ContainsKey(time))
                     {
-                        SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition));
+                        SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, target.GetComponent<Rigidbody>().velocity));
                         // Save the positions in my own lists
                     }
                     if (ReplayCommands.Count < numberCommands)
@@ -203,6 +207,8 @@ namespace Mirror
         InputCmd server_replayCmd;
         double server_replayID;
         double lastReplayedTime;
+
+        int repeated = 3;
         void RecieveRemoteCommands()
         {
             // RECIEVING AND REPLAYING COMMANDS FROM SERVER!!!
@@ -223,7 +229,7 @@ namespace Mirror
                     //TODO Packets will be recieved asynchronously, so sometimes older packets will fall in. You might have to chuck these!
                     toReplay = false;
                     // Generate new endpoint to send back to client
-                    TRS_Snapshot replySnap = new TRS_Snapshot(target.transform.localPosition);
+                    TRS_Snapshot replySnap = new TRS_Snapshot(target.transform.localPosition, target.GetComponent<Rigidbody>().velocity);
                     lastReplayedTime = server_replayID; // To keep track of last replayed ID
                     RpcRecvPosition(server_replayID, replySnap);
                     InputQueue.Remove(server_replayID); // Pop the most recent action. Move onto the next one
@@ -277,13 +283,24 @@ namespace Mirror
                 // Send redundant inputs over
 
                 InputCmd toSendCmd = CurrentCmd();
-
+                if (deltaCmdCount == 0 && repeated <= 0)
+                {
+                    InputCmd emptyCmd = InputCmd.Empty(); // create and return a new completely empty command
+                    double time = Time.time;
+                    emptyCmd.ticks = 1;
+                    if (ReplayCommands.Count < numberCommands)
+                    {
+                        ReplayCommands.Add(emptyCmd);
+                    }
+                    CmdUpdateInputLists(toSendCmd, time);
+                    repeated = noInputUpdateRate;
+                }
                 // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals
-                if (deltaCmdCount > 0)
+                else if (deltaCmdCount > 0)
                 {
 
                     double time = Time.time;
-                    SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition));
+                    SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, target.GetComponent<Rigidbody>().velocity));
                     // Send the server command over (according to this the number of send commands should be accurate now)
                     toSendCmd.ticks = deltaCmdCount;
                     // Save the positions in my own lists
@@ -295,6 +312,7 @@ namespace Mirror
                     CmdUpdateInputLists(toSendCmd, time);
                     deltaCmdCount = 0;
                 }
+                repeated -= 1;
                 // Clear old snapshots and inputs
                 if (SnapshotQueue.Count > 0 && SnapshotQueue.Keys[SnapshotQueue.Count - 1] + snapshotAge * NetworkClient.sendInterval < NetworkTime.localTime)
                 {
@@ -319,7 +337,7 @@ namespace Mirror
 
         }
         #region Networked Physics
-        private void Rewind(TRS_Snapshot lastValid)
+        private IEnumerator Rewind(TRS_Snapshot lastValid, int frame_num = 2)
         {
             /**
             * Rewind myself to my last valid state
@@ -328,29 +346,51 @@ namespace Mirror
             if (ReplayCommands.Count == 0)
             {
                 // Oopsies nothing to replay haha
-                return;
+                yield return null;
             }
-            Vector3 before = this.transform.localPosition;
-            this.transform.localPosition = lastValid.position;
-            NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
-
-            NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
-            int iteration = ReplayCommands.Count - 1;
-
-            while (iteration >= 0)
+            else
             {
-                InputCmd recent = ReplayCommands[iteration]; // Fetch the most recent ReplayCommand
-                controller.ReplayingInputs(recent.axis1, recent.axis2);
-                // Simulate it forwards by a delta time
-                manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
-                iteration -= 1;
-            }
-            NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
-            Vector3 finalPosition = this.transform.localPosition;
-            //TODO Smooth Position over the course of MULTIPLE FRAMES
-            this.transform.localPosition = Vector3.Slerp(before, finalPosition, 0.1f);
+                Vector3 before = this.transform.localPosition;
+                Vector3 beforeV = this.GetComponent<Rigidbody>().velocity;
+                this.GetComponent<Rigidbody>().velocity = lastValid.velocity;
+                this.transform.localPosition = lastValid.position;
+                NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
 
-            ReplayCommands.Clear();
+                NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
+                int iteration = ReplayCommands.Count - 1;
+
+                while (iteration >= 0)
+                {
+                    InputCmd recent = ReplayCommands[iteration]; // Fetch the most recent ReplayCommand
+                    controller.ReplayingInputs(recent.axis1, recent.axis2);
+                    // Simulate it forwards by a delta time
+                    manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
+                    iteration -= 1;
+                }
+                NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
+                Vector3 finalPosition = this.transform.localPosition;
+                Vector3 finalVel = this.GetComponent<Rigidbody>().velocity;
+
+                if ((finalPosition - before).magnitude > instaSnapError)
+                {
+                    print("FastSnap Rewinding!!!");
+                    this.transform.localPosition = finalPosition;
+                    this.GetComponent<Rigidbody>().velocity = finalVel;
+                }
+                else
+                {
+                    this.transform.localPosition = before;
+                    this.GetComponent<Rigidbody>().velocity = beforeV;
+                    while (frame_num > 0)
+                    {
+                        this.transform.localPosition = Vector3.Slerp(this.transform.localPosition, finalPosition, 0.07f);
+                        this.GetComponent<Rigidbody>().velocity = Vector3.Slerp(this.GetComponent<Rigidbody>().velocity, finalVel, 1f);
+                        frame_num -= 1;
+                        yield return new WaitForEndOfFrame();
+                    }
+                }
+                ReplayCommands.Clear();
+            }
 
         }
         #endregion
@@ -359,7 +399,7 @@ namespace Mirror
             if (!isLocalPlayer) return;
             // Run difference through some function that adjusts lerp coefficient based off how different you are
             // this.transform.localPosition = snap.position;
-            Rewind(snap);
+            StartCoroutine(Rewind(snap));
 
         }
         double lastRecievedTime = -1.0;

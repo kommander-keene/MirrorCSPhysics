@@ -2,6 +2,7 @@ using UnityEngine;
 public struct TRS_Snapshot
 {
     public Vector3 position;
+    public Vector3 velocity;
     // public Vector3 velocity; // First order approximation
     // public Quaternion rotation;
 
@@ -14,9 +15,9 @@ public struct TRS_Snapshot
     //     scale = s;
     // }
 
-    public TRS_Snapshot(Vector3 t)
+    public TRS_Snapshot(Vector3 t, Vector3 v)
     {
         position = t;
-        // velocity = v;
+        velocity = v;
     }
 }
