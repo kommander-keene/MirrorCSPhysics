@@ -283,7 +283,7 @@ namespace Mirror
                 // Send redundant inputs over
 
                 InputCmd toSendCmd = CurrentCmd();
-                if (deltaCmdCount == 0 && repeated <= 0)
+                if (target.GetComponent<Rigidbody>().velocity == Vector3.zero && deltaCmdCount == 0 && repeated <= 0)
                 {
                     InputCmd emptyCmd = InputCmd.Empty(); // create and return a new completely empty command
                     double time = Time.time;
@@ -351,8 +351,8 @@ namespace Mirror
             else
             {
                 Vector3 before = this.transform.localPosition;
-                Vector3 beforeV = this.GetComponent<Rigidbody>().velocity;
-                this.GetComponent<Rigidbody>().velocity = lastValid.velocity;
+                Vector3 beforeV = target.GetComponent<Rigidbody>().velocity;
+                target.GetComponent<Rigidbody>().velocity = lastValid.velocity;
                 this.transform.localPosition = lastValid.position;
                 NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
 
@@ -369,22 +369,22 @@ namespace Mirror
                 }
                 NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
                 Vector3 finalPosition = this.transform.localPosition;
-                Vector3 finalVel = this.GetComponent<Rigidbody>().velocity;
+                Vector3 finalVel = target.GetComponent<Rigidbody>().velocity;
 
                 if ((finalPosition - before).magnitude > instaSnapError)
                 {
                     print("FastSnap Rewinding!!!");
                     this.transform.localPosition = finalPosition;
-                    this.GetComponent<Rigidbody>().velocity = finalVel;
+                    target.GetComponent<Rigidbody>().velocity = finalVel;
                 }
                 else
                 {
                     this.transform.localPosition = before;
-                    this.GetComponent<Rigidbody>().velocity = beforeV;
+                    target.GetComponent<Rigidbody>().velocity = beforeV;
                     while (frame_num > 0)
                     {
                         this.transform.localPosition = Vector3.Slerp(this.transform.localPosition, finalPosition, 0.07f);
-                        this.GetComponent<Rigidbody>().velocity = Vector3.Slerp(this.GetComponent<Rigidbody>().velocity, finalVel, 1f);
+                        target.GetComponent<Rigidbody>().velocity = Vector3.Slerp(target.GetComponent<Rigidbody>().velocity, finalVel, 1f);
                         frame_num -= 1;
                         yield return new WaitForEndOfFrame();
                     }
@@ -666,7 +666,7 @@ CmdClientToServerSync(
                 if (NetworkPhysicsManager.instance != null)
                 {
                     //Add a new object that is exclusively physics simulated
-                    uint netID = this.GetComponent<NetworkIdentity>().netId;
+                    uint netID = target.GetComponent<NetworkIdentity>().netId;
                     bool success = NetworkPhysicsManager.instance.RegisterNetworkPhysicsObject(netID, this.gameObject, true);
                     Debug.Assert(success);
                 }
