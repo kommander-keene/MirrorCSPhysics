@@ -68,17 +68,9 @@ namespace Mirror
         // When everything works, we are receiving NT snapshots every 10 frames, but start interpolating after 2. 
         // Even if I assume we had 2 snapshots to begin with to start interpolating (which we don't), by the time we reach 13th frame, we are out of snapshots, and have to wait 7 frames for next snapshot to come. This is the reason why we absolutely need the timestamp adjustment. We are starting way too early to interpolate. 
         //
-        System.Random rand;
-        private int RandNext()
-        {
-            if (rand == null)
-            {
-                rand = new System.Random();
-            }
-            return rand.Next();
-        }
         // Keene
         InputCmd currentCmd;
+        List<InputCmd> currentCmds = new List<InputCmd>();
         GameObject mirrorPrefab;
         GameObject mirrorClone;
         int numberCommands = 100;
@@ -90,10 +82,33 @@ namespace Mirror
         public IController controller;
         public void InputDown(InputCmd cmd)
         {
-            currentCmd = cmd;
-            cmd.ticks = -1;
-            deltaCmdCount += 1;
-            cmdCount += 1;
+            if (InputCmd.Equals(cmd, currentCmd))
+            {
+                currentCmd = cmd;
+                deltaCmdCount += 1;
+            }
+            else
+            {
+                currentCmd.timestamp = Time.time;
+                currentCmd.ticks = deltaCmdCount;
+                if (deltaCmdCount > 0)
+                {
+                    currentCmds.Add(currentCmd);
+                    double time = currentCmd.timestamp;
+                    if (!SnapshotQueue.ContainsKey(time))
+                    {
+                        SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition));
+                        // Save the positions in my own lists
+                    }
+                    if (ReplayCommands.Count < numberCommands)
+                    {
+                        ReplayCommands.Add(currentCmd);
+                    }
+                }
+                deltaCmdCount = 0;
+                currentCmd = cmd;
+            }
+
             down = true;
         }
         public void InputUp()
@@ -115,7 +130,8 @@ namespace Mirror
 
         protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
         {
-            if (!down && SnapshotQueue.Count == 0 && ReplayCommands.Count == 0)
+            // TODO Some awkward snapping still happens!
+            if (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotQueue.Count == 0 && ReplayCommands.Count == 0)
             {
                 Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
                 Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
@@ -246,6 +262,20 @@ namespace Mirror
             // Only executed on local clients
             if (NetworkTime.localTime >= lastClientSendTime + NetworkClient.sendInterval)
             {
+                int rcnt = currentCmds.Count;
+
+                while (rcnt > 0)
+                {
+                    InputCmd rcmd = currentCmds[rcnt - 1];
+                    if (deltaCmdCount > 0)
+                    {
+                        print("Updating with Redundant Inputs");
+                        CmdUpdateInputLists(rcmd, rcmd.timestamp);
+                    }
+                    rcnt -= 1;
+                }
+                // Send redundant inputs over
+
                 InputCmd toSendCmd = CurrentCmd();
 
                 // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals
