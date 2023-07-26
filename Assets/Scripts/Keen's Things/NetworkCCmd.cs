@@ -337,7 +337,7 @@ namespace Mirror
 
         }
         #region Networked Physics
-        private IEnumerator Rewind(TRS_Snapshot lastValid, int frame_num = 2)
+        private IEnumerator Rewind(TRS_Snapshot lastValid, int frame_num = 40)
         {
             /**
             * Rewind myself to my last valid state
@@ -380,11 +380,13 @@ namespace Mirror
                 else
                 {
                     this.transform.localPosition = before;
-                    target.GetComponent<Rigidbody>().velocity = beforeV;
+                    Vector3 error = -(this.transform.localPosition - finalPosition);
+                    // target.GetComponent<Rigidbody>().velocity = beforeV;
                     while (frame_num > 0)
                     {
-                        this.transform.localPosition = Vector3.Slerp(this.transform.localPosition, finalPosition, 0.07f);
-                        target.GetComponent<Rigidbody>().velocity = Vector3.Slerp(target.GetComponent<Rigidbody>().velocity, finalVel, 1f);
+                        this.transform.localPosition = Vector3.Slerp(this.transform.localPosition, this.transform.localPosition + error, 0.07f);
+                        error = -(this.transform.localPosition - finalPosition);
+                        // target.GetComponent<Rigidbody>().velocity = Vector3.Slerp(target.GetComponent<Rigidbody>().velocity, finalVel, 1f);
                         frame_num -= 1;
                         yield return new WaitForEndOfFrame();
                     }
