@@ -105,7 +105,7 @@ CapsuleCollider:
   m_LayerOverridePriority: 0
   m_IsTrigger: 0
   m_ProvidesContacts: 0
-  m_Enabled: 0
+  m_Enabled: 1
   serializedVersion: 2
   m_Radius: 0.5
   m_Height: 1
@@ -136,7 +136,7 @@ Rigidbody:
   m_UseGravity: 1
   m_IsKinematic: 0
   m_Interpolate: 0
-  m_Constraints: 116
+  m_Constraints: 0
   m_CollisionDetection: 0
 --- !u!114 &5109106629795551829
 MonoBehaviour:
@@ -207,4 +207,7 @@ MonoBehaviour:
   MirrorPrefab: {fileID: 0}
   lastServerSendTime: 0
   timelineOffset: 0
+  frameSmoothing: 4
   errorMargin: 0.01
+  noInputUpdateRate: 4
+  instaSnapError: 1

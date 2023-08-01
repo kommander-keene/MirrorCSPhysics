@@ -3,21 +3,19 @@ public struct TRS_Snapshot
 {
     public Vector3 position;
     public Vector3 velocity;
-    // public Vector3 velocity; // First order approximation
-    // public Quaternion rotation;
 
-    // public Vector3 scale;
 
-    // public TRS_Snapshot(Vector3 t, Quaternion r, Vector3 s)
-    // {
-    //     position = t;
-    //     rotation = r;
-    //     scale = s;
-    // }
+    public Quaternion rotation;
+    public Vector3 angVel;
 
-    public TRS_Snapshot(Vector3 t, Vector3 v)
+    public TRS_Snapshot(Vector3 t, Vector3 v, Quaternion r, Vector3 a)
     {
         position = t;
         velocity = v;
+
+        rotation = r;
+        angVel = a;
     }
+
+
 }

@@ -46,11 +46,11 @@ public class Controller : NetworkBehaviour, IController
         }
 
     }
-    public void ReplayingInputs(float AD, float WS)
+    public void ReplayingInputs(InputCmd cmd)
     {
         if (isLocalPlayer) return;
         // print($"Trying to replay! {isClient} {isServer} {isLocalPlayer}");
-        Walk(AD, WS);
+        Walk(cmd.axis1, cmd.axis2);
     }
     int time_run = 0;
     int time_run2 = 0;
@@ -59,7 +59,7 @@ public class Controller : NetworkBehaviour, IController
     {
         if (WS != 0)
         {
-            driver.AddForce(-driver.transform.up.normalized * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
+            driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
             // this.transform.position += -driver.transform.up * speed * Time.fixedDeltaTime * Mathf.Sign(WS);
             // driver.velocity = Vector3.Lerp(-driver.transform.up * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
 
@@ -67,7 +67,7 @@ public class Controller : NetworkBehaviour, IController
         }
         if (AD != 0)
         {
-            driver.AddForce(driver.transform.right.normalized * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
+            driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
             // this.transform.position += driver.transform.right * speed * Time.fixedDeltaTime * Mathf.Sign(AD);
             // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
         }

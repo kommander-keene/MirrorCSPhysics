@@ -54,6 +54,7 @@ namespace Mirror
         [Header("Snapshot Interpolation")]
         [Tooltip("Add a small timeline offset to account for decoupled arrival of NetworkTime and NetworkTransform snapshots.\nfixes: https://github.com/MirrorNetworking/Mirror/issues/3427")]
         public bool timelineOffset = false;
+        public int frameSmoothing;
 
         // Ninja's Notes on offset & mulitplier:
         // 
@@ -101,7 +102,8 @@ namespace Mirror
                     double time = currentCmd.timestamp;
                     if (!SnapshotQueue.ContainsKey(time))
                     {
-                        SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, target.GetComponent<Rigidbody>().velocity));
+                        var rb = target.GetComponent<Rigidbody>();
+                        SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity));
                         // Save the positions in my own lists
                     }
                     if (ReplayCommands.Count < numberCommands)
@@ -220,7 +222,7 @@ namespace Mirror
                 if (replayed_ticks > 0)
                 {
                     // Do the Input() command
-                    controller.ReplayingInputs(server_replayCmd.axis1, server_replayCmd.axis2);
+                    controller.ReplayingInputs(server_replayCmd);
                     replayed_ticks -= 1;
                     replayed += 1;
                 }
@@ -229,7 +231,8 @@ namespace Mirror
                     //TODO Packets will be recieved asynchronously, so sometimes older packets will fall in. You might have to chuck these!
                     toReplay = false;
                     // Generate new endpoint to send back to client
-                    TRS_Snapshot replySnap = new TRS_Snapshot(target.transform.localPosition, target.GetComponent<Rigidbody>().velocity);
+                    var rb = target.GetComponent<Rigidbody>();
+                    TRS_Snapshot replySnap = new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity);
                     lastReplayedTime = server_replayID; // To keep track of last replayed ID
                     RpcRecvPosition(server_replayID, replySnap);
                     InputQueue.Remove(server_replayID); // Pop the most recent action. Move onto the next one
@@ -248,8 +251,6 @@ namespace Mirror
                                 server_replayCmd = MostRecentCommand();
                                 server_replayID = MostRecentKey();
                                 InputQueue.Remove(server_replayID);
-
-                                print("Fixed!!!");
                             }
                         }
                     }
@@ -283,7 +284,7 @@ namespace Mirror
                 // Send redundant inputs over
 
                 InputCmd toSendCmd = CurrentCmd();
-                if (target.GetComponent<Rigidbody>().velocity == Vector3.zero && deltaCmdCount == 0 && repeated <= 0)
+                if (SnapshotQueue.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
                 {
                     InputCmd emptyCmd = InputCmd.Empty(); // create and return a new completely empty command
                     double time = Time.time;
@@ -300,7 +301,8 @@ namespace Mirror
                 {
 
                     double time = Time.time;
-                    SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, target.GetComponent<Rigidbody>().velocity));
+                    var rb = target.GetComponent<Rigidbody>();
+                    SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity));
                     // Send the server command over (according to this the number of send commands should be accurate now)
                     toSendCmd.ticks = deltaCmdCount;
                     // Save the positions in my own lists
@@ -337,8 +339,15 @@ namespace Mirror
 
         }
         #region Networked Physics
-        private IEnumerator Rewind(TRS_Snapshot lastValid, int frame_num = 40)
+        /// <summary>
+        /// Does the rewinding. Note that values above 10ish start to be really slow to correct
+        /// </summary>
+        /// <param name="lastValid"></param>
+        /// <param name="frame_num"></param>
+        /// <returns></returns>
+        private IEnumerator Rewind(TRS_Snapshot lastValid)
         {
+            int frame_num = frameSmoothing;
             /**
             * Rewind myself to my last valid state
             * Do I have to rewind everything? Maybe.
@@ -350,10 +359,19 @@ namespace Mirror
             }
             else
             {
+                // Before times
+                var trv = target.GetComponent<Rigidbody>();
                 Vector3 before = this.transform.localPosition;
-                Vector3 beforeV = target.GetComponent<Rigidbody>().velocity;
-                target.GetComponent<Rigidbody>().velocity = lastValid.velocity;
+                Vector3 beforeV = trv.velocity;
+                Quaternion beforeR = transform.localRotation;
+                Vector3 beforeAV = trv.angularVelocity;
+
+                // Set to the start
+                trv.velocity = lastValid.velocity;
+                trv.angularVelocity = lastValid.angVel;
                 this.transform.localPosition = lastValid.position;
+                this.transform.localRotation = lastValid.rotation;
+
                 NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
 
                 NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
@@ -362,32 +380,46 @@ namespace Mirror
                 while (iteration >= 0)
                 {
                     InputCmd recent = ReplayCommands[iteration]; // Fetch the most recent ReplayCommand
-                    controller.ReplayingInputs(recent.axis1, recent.axis2);
+                    controller.ReplayingInputs(recent);
                     // Simulate it forwards by a delta time
                     manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
                     iteration -= 1;
                 }
                 NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
+
                 Vector3 finalPosition = this.transform.localPosition;
-                Vector3 finalVel = target.GetComponent<Rigidbody>().velocity;
+                Vector3 finalVel = trv.velocity;
+                Vector3 finalAVB = trv.angularVelocity;
+                Quaternion finalRot = transform.localRotation;
 
                 if ((finalPosition - before).magnitude > instaSnapError)
                 {
-                    print("FastSnap Rewinding!!!");
+                    print("Fast Correction");
                     this.transform.localPosition = finalPosition;
                     target.GetComponent<Rigidbody>().velocity = finalVel;
+                    transform.localRotation = finalRot;
+                    trv.angularVelocity = finalAVB;
                 }
                 else
                 {
                     this.transform.localPosition = before;
                     Vector3 error = -(this.transform.localPosition - finalPosition);
-                    // target.GetComponent<Rigidbody>().velocity = beforeV;
-                    while (frame_num > 0)
+                    Quaternion errorR = this.transform.localRotation * Quaternion.Inverse(finalRot);
+                    trv.velocity = beforeV;
+                    trv.angularVelocity = beforeAV;
+
+                    int frames = frame_num;
+                    float amt = .1f;
+                    while (frames > 0)
                     {
-                        this.transform.localPosition = Vector3.Slerp(this.transform.localPosition, this.transform.localPosition + error, 0.07f);
+                        this.transform.localPosition = Vector3.Slerp(this.transform.localPosition, this.transform.localPosition + error, amt);
                         error = -(this.transform.localPosition - finalPosition);
-                        // target.GetComponent<Rigidbody>().velocity = Vector3.Slerp(target.GetComponent<Rigidbody>().velocity, finalVel, 1f);
-                        frame_num -= 1;
+                        target.GetComponent<Rigidbody>().velocity = Vector3.Slerp(target.GetComponent<Rigidbody>().velocity, finalVel, amt);
+
+                        this.transform.localRotation = Quaternion.Lerp(this.transform.localRotation, this.transform.localRotation * errorR, amt);
+                        errorR = this.transform.localRotation * Quaternion.Inverse(finalRot);
+                        trv.angularVelocity = Vector3.Lerp(trv.angularVelocity, finalAVB, amt);
+                        frames -= 1;
                         yield return new WaitForEndOfFrame();
                     }
                 }
@@ -663,17 +695,17 @@ CmdClientToServerSync(
 
         void Start()
         {
-            if (isLocalPlayer)
+
+            // Always register anything that interacts with the net objects
+            if (NetworkPhysicsManager.instance != null)
             {
-                if (NetworkPhysicsManager.instance != null)
-                {
-                    //Add a new object that is exclusively physics simulated
-                    uint netID = target.GetComponent<NetworkIdentity>().netId;
-                    bool success = NetworkPhysicsManager.instance.RegisterNetworkPhysicsObject(netID, this.gameObject, true);
-                    Debug.Assert(success);
-                }
-                //Add only myself, since we don't really care where the others are, we are not resimulating them.
+                //Add a new object that is exclusively physics simulated
+                uint netID = target.GetComponent<NetworkIdentity>().netId;
+                bool success = NetworkPhysicsManager.instance.RegisterNetworkPhysicsObject(netID, this.gameObject, true);
+                Debug.Assert(success);
             }
+            //Add only myself, since we don't really care where the others are, we are not resimulating them.
+
         }
 
         public override void OnDeserialize(NetworkReader reader, bool initialState)
