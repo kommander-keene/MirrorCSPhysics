@@ -71,11 +71,11 @@ public class Controller : NetworkBehaviour, IController
             // this.transform.position += driver.transform.right * speed * Time.fixedDeltaTime * Mathf.Sign(AD);
             // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
         }
-        if (WS != 0 || AD != 0)
-        {
-            // Instantiate(cubePrefab, this.transform.position, Quaternion.identity);
-            name.name = $"Cubes Spawned = {time_run + 1}";
-        }
+        // if (WS != 0 || AD != 0)
+        // {
+        //     // Instantiate(cubePrefab, this.transform.position, Quaternion.identity);
+        //     name.name = $"Cubes Spawned = {time_run + 1}";
+        // }
         time_run = (WS != 0 || AD != 0) ? time_run + 1 : time_run;
 
     }

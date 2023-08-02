@@ -136,8 +136,8 @@ namespace Mirror
 
         protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
         {
-            // TODO Some awkward snapping still happens!
-            if (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotQueue.Count == 0 && ReplayCommands.Count == 0)
+            // If I am not the local player then I do whatever!
+            if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotQueue.Count == 0 && ReplayCommands.Count == 0))
             {
                 Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
                 Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
@@ -403,21 +403,24 @@ namespace Mirror
                 else
                 {
                     this.transform.localPosition = before;
-                    Vector3 error = -(this.transform.localPosition - finalPosition);
-                    Quaternion errorR = this.transform.localRotation * Quaternion.Inverse(finalRot);
+                    this.transform.localRotation = beforeR;
                     trv.velocity = beforeV;
                     trv.angularVelocity = beforeAV;
+                    Vector3 error = finalPosition - this.transform.localPosition;
+                    Quaternion errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
+
 
                     int frames = frame_num;
                     float amt = .1f;
                     while (frames > 0)
                     {
-                        this.transform.localPosition = Vector3.Slerp(this.transform.localPosition, this.transform.localPosition + error, amt);
-                        error = -(this.transform.localPosition - finalPosition);
-                        target.GetComponent<Rigidbody>().velocity = Vector3.Slerp(target.GetComponent<Rigidbody>().velocity, finalVel, amt);
+                        // Position and Velocity (Works Great)
+                        this.transform.localPosition = Vector3.Lerp(this.transform.localPosition, this.transform.localPosition + error, amt);
+                        error = finalPosition - this.transform.localPosition;
+                        target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(target.GetComponent<Rigidbody>().velocity, finalVel, amt);
 
-                        this.transform.localRotation = Quaternion.Lerp(this.transform.localRotation, this.transform.localRotation * errorR, amt);
-                        errorR = this.transform.localRotation * Quaternion.Inverse(finalRot);
+                        this.transform.localRotation = Quaternion.Slerp(this.transform.localRotation, this.transform.localRotation * errorR, amt);
+                        errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
                         trv.angularVelocity = Vector3.Lerp(trv.angularVelocity, finalAVB, amt);
                         frames -= 1;
                         yield return new WaitForEndOfFrame();

@@ -207,7 +207,7 @@ MonoBehaviour:
   MirrorPrefab: {fileID: 0}
   lastServerSendTime: 0
   timelineOffset: 0
-  frameSmoothing: 4
+  frameSmoothing: 6
   errorMargin: 0.01
   noInputUpdateRate: 4
   instaSnapError: 1
