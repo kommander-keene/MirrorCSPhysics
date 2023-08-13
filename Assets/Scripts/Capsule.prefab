@@ -133,8 +133,8 @@ Rigidbody:
     m_Bits: 0
   m_ImplicitCom: 1
   m_ImplicitTensor: 1
-  m_UseGravity: 1
-  m_IsKinematic: 0
+  m_UseGravity: 0
+  m_IsKinematic: 1
   m_Interpolate: 0
   m_Constraints: 0
   m_CollisionDetection: 0
@@ -206,8 +206,12 @@ MonoBehaviour:
   scaleSensitivity: 0.01
   MirrorPrefab: {fileID: 0}
   lastServerSendTime: 0
-  timelineOffset: 0
-  frameSmoothing: 6
+  frameSmoothing: 1
+  predictRotation: 1
   errorMargin: 0.01
+  correctionAmount: 0.1
   noInputUpdateRate: 4
   instaSnapError: 1
+  CheckerSpawner: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
+  timeStampAdjustment: 0
+  offset: 0

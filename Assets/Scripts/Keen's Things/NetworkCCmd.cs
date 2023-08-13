@@ -5,6 +5,8 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using System;
+using Unity.VisualScripting;
+
 namespace Mirror
 {
     [AddComponentMenu("Network/Network Command Transform")]
@@ -35,10 +37,10 @@ namespace Mirror
         protected bool hasSentUnchangedPosition;
         public const int MAX_INPUT_QUEUE = 1024;
 
-        SortedList<double, InputCmd> InputQueue;
+        SortedList<double, InputCmd> InputQueue; // Replace it with a FILO Queue. 
         List<double> TestList = new List<double>();
         int snapshotAge = 0;
-        SortedList<double, TRS_Snapshot> SnapshotQueue = new SortedList<double, TRS_Snapshot>();
+        Dictionary<double, TRS_Snapshot> SnapshotMap;
 
         #endregion
 #endif
@@ -52,10 +54,10 @@ namespace Mirror
         const uint sendIntervalMultiplier = 1; // not implemented yet
 
         [Header("Snapshot Interpolation")]
-        [Tooltip("Add a small timeline offset to account for decoupled arrival of NetworkTime and NetworkTransform snapshots.\nfixes: https://github.com/MirrorNetworking/Mirror/issues/3427")]
-        public bool timelineOffset = false;
+        // [Tooltip("Add a small timeline offset to account for decoupled arrival of NetworkTime and NetworkTransform snapshots.\nfixes: https://github.com/MirrorNetworking/Mirror/issues/3427")]
+        // public bool timelineOffset = false;
         public int frameSmoothing;
-
+        public bool predictRotation;
         // Ninja's Notes on offset & mulitplier:
         // 
         // In a no multiplier scenario:
@@ -72,54 +74,77 @@ namespace Mirror
         // Keene
         InputCmd currentCmd;
 
-        List<InputCmd> currentCmds = new List<InputCmd>();
+        List<InputCmd> currentCmds;
         GameObject mirrorPrefab;
         GameObject mirrorClone;
         int numberCommands = 100;
-        List<InputCmd> ReplayCommands = new List<InputCmd>();
+        List<InputCmd> ReplayCommands;
         bool down = false;
         int deltaCmdCount;
         int cmdCount;
         public float errorMargin;
         public IController controller;
-
+        public float correctionAmount = .1f;
         public int noInputUpdateRate = 3;
         public float instaSnapError = 1;
+        [Header("Debug")]
+        public GameObject CheckerSpawner;
+        private void InitializeLists()
+        {
+            currentCmds = new List<InputCmd>();
+            ReplayCommands = new List<InputCmd>();
+            SnapshotMap = new Dictionary<double, TRS_Snapshot>();
+            InputQueue = new SortedList<double, InputCmd>();
+        }
+        void Awake()
+        {
+            base.Awake();
+            InitializeLists();
+        }
+        private TRS_Snapshot CreateNewSnapshot()
+        {
+            Rigidbody rb = target.GetComponent<Rigidbody>();
+            return new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity);
+        }
         public void InputDown(InputCmd cmd)
         {
-            if (InputCmd.Equals(cmd, currentCmd))
-            {
-                currentCmd = cmd;
-                deltaCmdCount += 1;
-            }
-            else
-            {
-                currentCmd.timestamp = Time.time;
-                currentCmd.ticks = deltaCmdCount;
-                if (deltaCmdCount > 0)
-                {
-                    currentCmds.Add(currentCmd);
-                    double time = currentCmd.timestamp;
-                    if (!SnapshotQueue.ContainsKey(time))
-                    {
-                        var rb = target.GetComponent<Rigidbody>();
-                        SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity));
-                        // Save the positions in my own lists
-                    }
-                    if (ReplayCommands.Count < numberCommands)
-                    {
-                        ReplayCommands.Add(currentCmd);
-                    }
-                }
-                deltaCmdCount = 0;
-                currentCmd = cmd;
-            }
+            print($"Input at time {Time.time} {CreateNewSnapshot().position}");
+            // if (InputCmd.Equals(cmd, currentCmd))
+            // {
+            // deltaCmdCount += 1;
+            // }
+
+            // else
+            // {
+            //     currentCmd.timestamp = Time.time;
+            //     currentCmd.ticks = deltaCmdCount;
+            //     if (deltaCmdCount > 0)
+            //     {
+            //         currentCmds.Add(currentCmd);
+            //         double time = currentCmd.timestamp;
+            //         if (!SnapshotMap.ContainsKey(time))
+            //         {
+            //             SnapshotMap.Add(time, CreateNewSnapshot());
+            //             // Save the positions in my own lists
+            //         }
+            //         if (ReplayCommands.Count < numberCommands)
+            //         {
+            //             ReplayCommands.Add(currentCmd);
+            //         }
+            //     }
+            //     deltaCmdCount = 1;
+            //     currentCmd = cmd;
+            // }
+
+            deltaCmdCount = 1;
+            currentCmd = cmd;
 
             down = true;
         }
         public void InputUp()
         {
             down = false;
+            deltaCmdCount = 0;
         }
 
         public void SetController(IController ctrl)
@@ -131,13 +156,17 @@ namespace Mirror
             return currentCmd;
         }
 
-        double timeStampAdjustment => NetworkServer.sendInterval * (sendIntervalMultiplier - 1);
-        double offset => timelineOffset ? NetworkServer.sendInterval * sendIntervalMultiplier : 0;
+        public bool IsReplayingCommands()
+        {
+            return SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0;
+        }
+        // double timeStampAdjustment => NetworkServer.sendInterval * (sendIntervalMultiplier - 1);
+        // double offset => timelineOffset ? NetworkServer.sendInterval * sendIntervalMultiplier : 0;
 
         protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
         {
             // If I am not the local player then I do whatever!
-            if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotQueue.Count == 0 && ReplayCommands.Count == 0))
+            if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotMap.Count == 0 && ReplayCommands.Count == 0))
             {
                 Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
                 Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
@@ -210,9 +239,18 @@ namespace Mirror
         double server_replayID;
         double lastReplayedTime;
 
-        int repeated = 3;
+        int repeated = 1;
+        Vector3 remember;
         void RecieveRemoteCommands()
         {
+            if (!toReplay && InputQueue.Count > 0)
+            {
+                server_replayID = MostRecentKey();
+                server_replayCmd = MostRecentCommand();
+                // They are different so, it means we havent deducted from replayed ticks yet
+                replayed_ticks = server_replayCmd.ticks;
+                toReplay = true; // Set an id so this doesn't get hit twice
+            }
             // RECIEVING AND REPLAYING COMMANDS FROM SERVER!!!
             if (InputQueue.Count > 0)
             {
@@ -221,47 +259,47 @@ namespace Mirror
 
                 if (replayed_ticks > 0)
                 {
-                    // Do the Input() command
+                    server_replayID = MostRecentKey();
+                    server_replayCmd = MostRecentCommand();
+                    // This is just incase the command changes or something due to the sorts
+                    print($"Server Before Position = {transform.localPosition}");
                     controller.ReplayingInputs(server_replayCmd);
+
                     replayed_ticks -= 1;
                     replayed += 1;
                 }
                 else
                 {
-                    //TODO Packets will be recieved asynchronously, so sometimes older packets will fall in. You might have to chuck these!
+
                     toReplay = false;
                     // Generate new endpoint to send back to client
-                    var rb = target.GetComponent<Rigidbody>();
-                    TRS_Snapshot replySnap = new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity);
+                    TRS_Snapshot replySnap = CreateNewSnapshot();
+                    print($"Server After Position = {replySnap.position}");
                     lastReplayedTime = server_replayID; // To keep track of last replayed ID
+                                                        // print("Sent ServerID is " + server_replayID);
+                    remember = transform.position;
                     RpcRecvPosition(server_replayID, replySnap);
                     InputQueue.Remove(server_replayID); // Pop the most recent action. Move onto the next one
                                                         // Pop next one
                     if (InputQueue.Count > 0)
                     {
-                        if (InputQueue.Count > 0)
-                        {
-                            server_replayCmd = MostRecentCommand();
-                            server_replayID = MostRecentKey();
+                        server_replayCmd = MostRecentCommand();
+                        server_replayID = MostRecentKey();
 
-                            bool outOfOrder = server_replayID < lastReplayedTime;
+                        // bool outOfOrder = server_replayID < lastReplayedTime;
 
-                            while (InputQueue.Count > 0 && outOfOrder)
-                            {
-                                server_replayCmd = MostRecentCommand();
-                                server_replayID = MostRecentKey();
-                                InputQueue.Remove(server_replayID);
-                            }
-                        }
+                        // while (InputQueue.Count > 0 && outOfOrder)
+                        // {
+                        //     server_replayCmd = MostRecentCommand();
+                        //     server_replayID = MostRecentKey();
+                        //     InputQueue.Remove(server_replayID);
+                        // }
+
                     }
                 }
 
-                if (!toReplay && InputQueue.Count > 0)
-                {
-                    // They are different so, it means we havent deducted from replayed ticks yet
-                    replayed_ticks = server_replayCmd.ticks;
-                    toReplay = true; // Set an id so this doesn't get hit twice
-                }
+
+
             }
         }
         void BroadcastLocalInputs()
@@ -274,21 +312,21 @@ namespace Mirror
                 while (rcnt > 0)
                 {
                     InputCmd rcmd = currentCmds[rcnt - 1];
-                    if (deltaCmdCount > 0)
-                    {
-                        print("Updating with Redundant Inputs");
-                        CmdUpdateInputLists(rcmd, rcmd.timestamp);
-                    }
+                    CmdUpdateInputLists(rcmd, rcmd.timestamp);
                     rcnt -= 1;
                 }
+                currentCmds.Clear();
                 // Send redundant inputs over
 
                 InputCmd toSendCmd = CurrentCmd();
-                if (SnapshotQueue.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
+                if (SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
                 {
                     InputCmd emptyCmd = InputCmd.Empty(); // create and return a new completely empty command
                     double time = Time.time;
                     emptyCmd.ticks = 1;
+
+                    SnapshotMap.Add(time, CreateNewSnapshot());
+
                     if (ReplayCommands.Count < numberCommands)
                     {
                         ReplayCommands.Add(emptyCmd);
@@ -299,10 +337,18 @@ namespace Mirror
                 // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals
                 else if (deltaCmdCount > 0)
                 {
-
                     double time = Time.time;
-                    var rb = target.GetComponent<Rigidbody>();
-                    SnapshotQueue.Add(time, new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity));
+                    if (!SnapshotMap.ContainsKey(time))
+                    {
+                        var sn = CreateNewSnapshot();
+                        SnapshotMap.Add(time, sn);
+                        print("SENDING " + sn.position);
+                    }
+                    else
+                    {
+                        SnapshotMap[time] = CreateNewSnapshot();
+                        print("SENDING 2" + SnapshotMap[time].position);
+                    }
                     // Send the server command over (according to this the number of send commands should be accurate now)
                     toSendCmd.ticks = deltaCmdCount;
                     // Save the positions in my own lists
@@ -310,16 +356,11 @@ namespace Mirror
                     {
                         ReplayCommands.Add(toSendCmd);
                     }
-                    // keepentracken += 1;
                     CmdUpdateInputLists(toSendCmd, time);
                     deltaCmdCount = 0;
                 }
                 repeated -= 1;
                 // Clear old snapshots and inputs
-                if (SnapshotQueue.Count > 0 && SnapshotQueue.Keys[SnapshotQueue.Count - 1] + snapshotAge * NetworkClient.sendInterval < NetworkTime.localTime)
-                {
-                    SnapshotQueue.Clear();
-                }
                 lastClientSendTime = NetworkTime.localTime;
             }
         }
@@ -327,10 +368,12 @@ namespace Mirror
         [Command(channel = Channels.Unreliable)]
         void CmdUpdateInputLists(InputCmd cmd, double id)
         {
-            // if (cmd.ticks != 0)
-            // print(cmd.ticks);
+
             if (InputQueue.Count < MAX_INPUT_QUEUE && !InputQueue.ContainsKey(id))
+            {
                 InputQueue.Add(id, cmd);
+            }
+
 
             // FIGURED IT OUT! InputQueue seems to randomly be dropping some of my ids for some reason?
             // print($"{this.gameObject.name} is adding a command to the input list");
@@ -345,7 +388,7 @@ namespace Mirror
         /// <param name="lastValid"></param>
         /// <param name="frame_num"></param>
         /// <returns></returns>
-        private IEnumerator Rewind(TRS_Snapshot lastValid)
+        private IEnumerator Rewind(TRS_Snapshot lastValid, double id)
         {
             int frame_num = frameSmoothing;
             /**
@@ -366,17 +409,25 @@ namespace Mirror
                 Quaternion beforeR = transform.localRotation;
                 Vector3 beforeAV = trv.angularVelocity;
 
+                if (predictRotation)
+                {
+                    beforeR = transform.localRotation;
+                    beforeAV = trv.angularVelocity;
+                }
                 // Set to the start
-                trv.velocity = lastValid.velocity;
-                trv.angularVelocity = lastValid.angVel;
+
                 this.transform.localPosition = lastValid.position;
-                this.transform.localRotation = lastValid.rotation;
+                trv.velocity = lastValid.velocity;
+                if (predictRotation)
+                {
+                    trv.angularVelocity = lastValid.angVel;
+                    this.transform.localRotation = lastValid.rotation;
+                }
 
                 NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
 
                 NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
                 int iteration = ReplayCommands.Count - 1;
-
                 while (iteration >= 0)
                 {
                     InputCmd recent = ReplayCommands[iteration]; // Fetch the most recent ReplayCommand
@@ -385,74 +436,91 @@ namespace Mirror
                     manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
                     iteration -= 1;
                 }
+                ReplayCommands.Clear();
                 NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
 
                 Vector3 finalPosition = this.transform.localPosition;
                 Vector3 finalVel = trv.velocity;
+
                 Vector3 finalAVB = trv.angularVelocity;
                 Quaternion finalRot = transform.localRotation;
 
-                if ((finalPosition - before).magnitude > instaSnapError)
+                if ((before - finalPosition).magnitude > instaSnapError)
                 {
-                    print("Fast Correction");
+                    print($"{id} At {before} and near {finalPosition}");
                     this.transform.localPosition = finalPosition;
                     target.GetComponent<Rigidbody>().velocity = finalVel;
-                    transform.localRotation = finalRot;
-                    trv.angularVelocity = finalAVB;
+                    if (predictRotation)
+                    {
+                        transform.localRotation = finalRot;
+                        trv.angularVelocity = finalAVB;
+                    }
+
+                    Instantiate(CheckerSpawner, finalPosition, finalRot);
                 }
                 else
                 {
+                    // Afix this position to before!
                     this.transform.localPosition = before;
-                    this.transform.localRotation = beforeR;
                     trv.velocity = beforeV;
-                    trv.angularVelocity = beforeAV;
-                    Vector3 error = finalPosition - this.transform.localPosition;
-                    Quaternion errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
+                    if (predictRotation)
+                    {
+                        this.transform.localRotation = beforeR;
+                        trv.angularVelocity = beforeAV;
+                    }
 
-
+                    Vector3 error;
+                    Quaternion errorR;
                     int frames = frame_num;
-                    float amt = .1f;
+
                     while (frames > 0)
                     {
-                        // Position and Velocity (Works Great)
-                        this.transform.localPosition = Vector3.Lerp(this.transform.localPosition, this.transform.localPosition + error, amt);
-                        error = finalPosition - this.transform.localPosition;
-                        target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(target.GetComponent<Rigidbody>().velocity, finalVel, amt);
+                        // float frameCNT = (float)(frame_num - frames) / (float)frame_num;
 
-                        this.transform.localRotation = Quaternion.Slerp(this.transform.localRotation, this.transform.localRotation * errorR, amt);
-                        errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
-                        trv.angularVelocity = Vector3.Lerp(trv.angularVelocity, finalAVB, amt);
+                        // Position and Velocity
+                        // print($"Soft Correction {finalPosition - this.transform.localPosition}");
+                        error = finalPosition - this.transform.localPosition;
+                        this.transform.localPosition = Vector3.Lerp(this.transform.localPosition, this.transform.localPosition + error, correctionAmount);
+                        target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(target.GetComponent<Rigidbody>().velocity, finalVel, 1);
+
+
+                        if (predictRotation)
+                        {
+                            errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
+                            this.transform.localRotation = Quaternion.Lerp(this.transform.localRotation, this.transform.localRotation * errorR, correctionAmount);
+                            trv.angularVelocity = Vector3.Lerp(trv.angularVelocity, finalAVB, 1);
+                        }
                         frames -= 1;
-                        yield return new WaitForEndOfFrame();
+                        yield return new WaitForFixedUpdate();
                     }
                 }
-                ReplayCommands.Clear();
+
             }
 
         }
         #endregion
-        void DoPositionErrorCorrect(float a, TRS_Snapshot snap)
+        void DoPositionErrorCorrect(double a, TRS_Snapshot snap)
         {
             if (!isLocalPlayer) return;
             // Run difference through some function that adjusts lerp coefficient based off how different you are
             // this.transform.localPosition = snap.position;
-            StartCoroutine(Rewind(snap));
+            StartCoroutine(Rewind(snap, a));
 
         }
         double lastRecievedTime = -1.0;
         [ClientRpc(channel = Channels.Unreliable)]
-        void RpcRecvPosition(double id, TRS_Snapshot sv_snp)
+        void RpcRecvPosition(double id, TRS_Snapshot serverSnap)
         {
             if (!isLocalPlayer || !isClient) return;
 
-            TRS_Snapshot reff;
+            TRS_Snapshot localSnap;
 
-            if (SnapshotQueue.TryGetValue(id, out reff))
+            if (SnapshotMap.TryGetValue(id, out localSnap))
             {
                 // print($"SERVER POSITION: {sv_snp.position}");
 
                 // Its in the queue!
-                float mgerror = (sv_snp.position - reff.position).magnitude;
+                float mgerror = (serverSnap.position - localSnap.position).magnitude;
                 bool skip = false;
                 if (lastRecievedTime > id)
                 {
@@ -462,9 +530,9 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
-                    // print($"RECV: Comparing {reff.position} vs {snp.position}. {removed}");
-                    DoPositionErrorCorrect(mgerror, sv_snp);
-                    bool removed = SnapshotQueue.Remove(id);
+                    print($"RECV: {id} I am at {localSnap.position} vs server is at {serverSnap.position}");
+                    DoPositionErrorCorrect(id, serverSnap);
+                    bool removed = SnapshotMap.Remove(id);
                     // Remove from list!
                 }
                 else
@@ -476,11 +544,11 @@ namespace Mirror
                 // Perform an error check, and if not, correct.
                 // To correct, just lerp between current position and hypothetical position
             }
-            else
+            else if (SnapshotMap.Count > 0)
             {
-                //print($"RECV: Position is not found. Correcting position...");
+                print("Error Something is not quiet right!");
                 // Automatically perform corrections
-                DoPositionErrorCorrect(100, sv_snp);
+                DoPositionErrorCorrect(id, serverSnap);
             }
 
             // Compares the positions and determines whether or not we need to update or not...
@@ -561,9 +629,6 @@ RpcServerToClientSync(
 #endif
             }
         }
-
-
-        // IRRELEVANT
         void UpdateServerInterpolation()
         {
             // apply buffered snapshots IF client authority
@@ -692,8 +757,6 @@ CmdClientToServerSync(
                 if (syncScale) writer.WriteVector3(target.localScale);
             }
 
-            InputQueue = new SortedList<double, InputCmd>();
-
         }
 
         void Start()
@@ -736,6 +799,8 @@ CmdClientToServerSync(
             return (!positionChanged && !rotationChanged && !scaleChanged);
         }
 #endif
+        public float timeStampAdjustment;
+        public float offset;
         // cmd /////////////////////////////////////////////////////////////////
         // only unreliable. see comment above of this file.
 
