@@ -211,7 +211,7 @@ MonoBehaviour:
   errorMargin: 0.01
   correctionAmount: 0.1
   noInputUpdateRate: 4
-  instaSnapError: 1
+  instaSnapError: 0
   CheckerSpawner: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
   timeStampAdjustment: 0
   offset: 0

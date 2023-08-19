@@ -73,7 +73,7 @@ namespace Mirror
         //
         // Keene
         InputCmd currentCmd;
-
+        bool validCmd;
         List<InputCmd> currentCmds;
         GameObject mirrorPrefab;
         GameObject mirrorClone;
@@ -108,38 +108,60 @@ namespace Mirror
         }
         public void InputDown(InputCmd cmd)
         {
-            print($"Input at time {Time.time} {CreateNewSnapshot().position}");
-            // if (InputCmd.Equals(cmd, currentCmd))
-            // {
-            // deltaCmdCount += 1;
-            // }
-
-            // else
-            // {
-            //     currentCmd.timestamp = Time.time;
-            //     currentCmd.ticks = deltaCmdCount;
-            //     if (deltaCmdCount > 0)
-            //     {
-            //         currentCmds.Add(currentCmd);
-            //         double time = currentCmd.timestamp;
-            //         if (!SnapshotMap.ContainsKey(time))
-            //         {
-            //             SnapshotMap.Add(time, CreateNewSnapshot());
-            //             // Save the positions in my own lists
-            //         }
-            //         if (ReplayCommands.Count < numberCommands)
-            //         {
-            //             ReplayCommands.Add(currentCmd);
-            //         }
-            //     }
-            //     deltaCmdCount = 1;
-            //     currentCmd = cmd;
-            // }
-
-            deltaCmdCount = 1;
-            currentCmd = cmd;
-
+            // StartCoroutine(WaitForPhysicsUpdate(cmd));
+            RecordMoves(cmd);
             down = true;
+        }
+        void RecordMoves(InputCmd cmd)
+        {
+            if (InputCmd.CmpActions(cmd, currentCmd))
+            {
+                print($"Same {SnapshotMap.Count}");
+                deltaCmdCount += 1;
+            }
+            else
+            {
+                // check if currentCommand is valid
+                if (validCmd)
+                {
+                    // Save previous commands in list
+                    currentCmd.timestamp = Time.time;
+                    currentCmd.ticks = deltaCmdCount;
+                    if (deltaCmdCount > 0)
+                    {
+                        // If valid commands, add to list of intermediate commands
+                        currentCmds.Add(currentCmd);
+                        // Do snapshot things / update snapshot to more accurate position
+                        double time = currentCmd.timestamp;
+                        if (SnapshotMap.Count == 0 || !SnapshotMap.ContainsKey(time))
+                        {
+                            TRS_Snapshot sn = CreateNewSnapshot();
+                            print($"CORRECT ({time}) Snapshot Pos {sn.position}");
+                            SnapshotMap.Add(time, sn);
+                            // Save the positions in my own lists
+                            if (ReplayCommands.Count < numberCommands)
+                            {
+                                // Increment commands to replay
+                                ReplayCommands.Add(currentCmd);
+                            }
+                        }
+                        currentCmd = cmd; // Update the current command
+                    }
+                }
+                else
+                {
+                    // Previous command was invalid
+                    cmd.ticks = 1;
+                    deltaCmdCount = 1;
+                    currentCmd = cmd;
+                }
+            }
+        }
+        IEnumerator WaitForPhysicsUpdate(InputCmd cmd)
+        {
+            yield return new WaitForFixedUpdate();
+            RecordMoves(cmd);
+            print($"Post Update Position {this.transform.localPosition}");
         }
         public void InputUp()
         {
@@ -166,19 +188,19 @@ namespace Mirror
         protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
         {
             // If I am not the local player then I do whatever!
-            if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotMap.Count == 0 && ReplayCommands.Count == 0))
-            {
-                Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
-                Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
-                if (syncPosition)
-                    target.localPosition = interpolatePosition ? lerpedInterPosition : lerpedEndPosition;
+            // if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotMap.Count == 0 && ReplayCommands.Count == 0))
+            // {
+            //     Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
+            //     Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
+            //     if (syncPosition)
+            //         target.localPosition = interpolatePosition ? lerpedInterPosition : lerpedEndPosition;
 
-                if (syncRotation)
-                    target.localRotation = interpolateRotation ? interpolated.rotation : endGoal.rotation;
+            //     if (syncRotation)
+            //         target.localRotation = interpolateRotation ? interpolated.rotation : endGoal.rotation;
 
-                if (syncScale)
-                    target.localScale = interpolateScale ? interpolated.scale : endGoal.scale;
-            }
+            //     if (syncScale)
+            //         target.localScale = interpolateScale ? interpolated.scale : endGoal.scale;
+            // }
         }
         // update //////////////////////////////////////////////////////////////
         // Update applies interpolation
@@ -238,9 +260,17 @@ namespace Mirror
         InputCmd server_replayCmd;
         double server_replayID;
         double lastReplayedTime;
-
+        int prevSnapshotCount = 0;
         int repeated = 1;
         Vector3 remember;
+
+        void RpcAckOutOfOrder(double packetID)
+        {
+            // Removes Packets which are out of order!
+            SnapshotMap.Remove(packetID);
+
+
+        }
         void RecieveRemoteCommands()
         {
             if (!toReplay && InputQueue.Count > 0)
@@ -262,7 +292,6 @@ namespace Mirror
                     server_replayID = MostRecentKey();
                     server_replayCmd = MostRecentCommand();
                     // This is just incase the command changes or something due to the sorts
-                    print($"Server Before Position = {transform.localPosition}");
                     controller.ReplayingInputs(server_replayCmd);
 
                     replayed_ticks -= 1;
@@ -274,10 +303,10 @@ namespace Mirror
                     toReplay = false;
                     // Generate new endpoint to send back to client
                     TRS_Snapshot replySnap = CreateNewSnapshot();
-                    print($"Server After Position = {replySnap.position}");
                     lastReplayedTime = server_replayID; // To keep track of last replayed ID
                                                         // print("Sent ServerID is " + server_replayID);
                     remember = transform.position;
+                    print($"({server_replayID}) Server position is at {replySnap.position}");
                     RpcRecvPosition(server_replayID, replySnap);
                     InputQueue.Remove(server_replayID); // Pop the most recent action. Move onto the next one
                                                         // Pop next one
@@ -286,14 +315,15 @@ namespace Mirror
                         server_replayCmd = MostRecentCommand();
                         server_replayID = MostRecentKey();
 
-                        // bool outOfOrder = server_replayID < lastReplayedTime;
+                        bool outOfOrder = server_replayID < lastReplayedTime;
 
-                        // while (InputQueue.Count > 0 && outOfOrder)
-                        // {
-                        //     server_replayCmd = MostRecentCommand();
-                        //     server_replayID = MostRecentKey();
-                        //     InputQueue.Remove(server_replayID);
-                        // }
+                        while (InputQueue.Count > 0 && outOfOrder)
+                        {
+                            server_replayCmd = MostRecentCommand();
+                            server_replayID = MostRecentKey();
+                            InputQueue.Remove(server_replayID);
+                            RpcAckOutOfOrder(server_replayID);
+                        }
 
                     }
                 }
@@ -308,47 +338,37 @@ namespace Mirror
             if (NetworkTime.localTime >= lastClientSendTime + NetworkClient.sendInterval)
             {
                 int rcnt = currentCmds.Count;
-
                 while (rcnt > 0)
                 {
                     InputCmd rcmd = currentCmds[rcnt - 1];
+                    print($"Sending? ({rcmd.timestamp}) delta ({rcmd.ticks}) Snapshot Pos {SnapshotMap[rcmd.timestamp].position}");
                     CmdUpdateInputLists(rcmd, rcmd.timestamp);
                     rcnt -= 1;
                 }
                 currentCmds.Clear();
-                // Send redundant inputs over
+                // // Send redundant inputs over
 
                 InputCmd toSendCmd = CurrentCmd();
                 if (SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
                 {
-                    InputCmd emptyCmd = InputCmd.Empty(); // create and return a new completely empty command
-                    double time = Time.time;
-                    emptyCmd.ticks = 1;
+                    // InputCmd emptyCmd = InputCmd.Empty(); // create and return a new completely empty command
+                    // double time = Time.time;
+                    // emptyCmd.ticks = 1;
 
-                    SnapshotMap.Add(time, CreateNewSnapshot());
+                    // SnapshotMap.Add(time, CreateNewSnapshot());
 
-                    if (ReplayCommands.Count < numberCommands)
-                    {
-                        ReplayCommands.Add(emptyCmd);
-                    }
-                    CmdUpdateInputLists(toSendCmd, time);
-                    repeated = noInputUpdateRate;
+                    // if (ReplayCommands.Count < numberCommands)
+                    // {
+                    //     ReplayCommands.Add(emptyCmd);
+                    // }
+                    // CmdUpdateInputLists(toSendCmd, time);
+                    // repeated = noInputUpdateRate;
                 }
                 // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals
                 else if (deltaCmdCount > 0)
                 {
-                    double time = Time.time;
-                    if (!SnapshotMap.ContainsKey(time))
-                    {
-                        var sn = CreateNewSnapshot();
-                        SnapshotMap.Add(time, sn);
-                        print("SENDING " + sn.position);
-                    }
-                    else
-                    {
-                        SnapshotMap[time] = CreateNewSnapshot();
-                        print("SENDING 2" + SnapshotMap[time].position);
-                    }
+                    // TODO Bug is causing something to not send as many ticks over.
+                    // Server side will only simulate like n-1 or something like that, causing a lag and then a snapback.
                     // Send the server command over (according to this the number of send commands should be accurate now)
                     toSendCmd.ticks = deltaCmdCount;
                     // Save the positions in my own lists
@@ -356,6 +376,17 @@ namespace Mirror
                     {
                         ReplayCommands.Add(toSendCmd);
                     }
+                    double time = Time.time;
+                    var sn = CreateNewSnapshot();
+                    if (!SnapshotMap.ContainsKey(time))
+                    {
+                        SnapshotMap.Add(time, sn);
+                    }
+                    else
+                    {
+                        SnapshotMap[time] = sn;
+                    }
+                    print($"Sending Wrong! ({time}) delta ({deltaCmdCount}) Snapshot Pos {sn.position}");
                     CmdUpdateInputLists(toSendCmd, time);
                     deltaCmdCount = 0;
                 }
@@ -400,6 +431,7 @@ namespace Mirror
                 // Oopsies nothing to replay haha
                 yield return null;
             }
+
             else
             {
                 // Before times
@@ -431,9 +463,13 @@ namespace Mirror
                 while (iteration >= 0)
                 {
                     InputCmd recent = ReplayCommands[iteration]; // Fetch the most recent ReplayCommand
+                    double pvKey = recent.timestamp;
                     controller.ReplayingInputs(recent);
                     // Simulate it forwards by a delta time
                     manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
+                    // Update my shit
+                    var sn = CreateNewSnapshot();
+                    SnapshotMap[pvKey] = sn;
                     iteration -= 1;
                 }
                 ReplayCommands.Clear();
@@ -512,7 +548,7 @@ namespace Mirror
         void RpcRecvPosition(double id, TRS_Snapshot serverSnap)
         {
             if (!isLocalPlayer || !isClient) return;
-
+            print($"recieving... ({id})");
             TRS_Snapshot localSnap;
 
             if (SnapshotMap.TryGetValue(id, out localSnap))
@@ -530,7 +566,7 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
-                    print($"RECV: {id} I am at {localSnap.position} vs server is at {serverSnap.position}");
+                    print($"({id}) I am at {localSnap.position} vs server is at {serverSnap.position}");
                     DoPositionErrorCorrect(id, serverSnap);
                     bool removed = SnapshotMap.Remove(id);
                     // Remove from list!

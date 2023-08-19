@@ -11,5 +11,10 @@ public struct InputCmd
         empty.axis2 = 0;
         return empty;
     }
+
+    public static bool CmpActions(InputCmd a, InputCmd b)
+    {
+        return a.axis1 == b.axis1 && a.axis2 == b.axis2 && a.axis3 == b.axis3;
+    }
 }
 

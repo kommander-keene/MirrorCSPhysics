@@ -37,7 +37,6 @@ public class Controller : NetworkBehaviour, IController
             cmd.axis2 = WS;
             cmd.axis3 = J;
             time_run2 += 1;
-            print($"Before {Time.time} {transform.localPosition}");
             Walk(AD, WS, J); // Effects Local Client
             netCmdMg.InputDown(cmd);
         }
@@ -58,20 +57,25 @@ public class Controller : NetworkBehaviour, IController
 
     IEnumerator balls()
     {
-        yield return new WaitForSeconds(0f);
-        jumperonied = true;
+        yield return new WaitForSeconds(0.5f);
+        // jumperonied = true;
+        pressed = true;
     }
+    bool pressed = true;
     #region shared 
     void Walk(float AD, float WS, float J)
     {
-        if (WS != 0)
+        print($"Pre-move {this.transform.localPosition}");
+        if (WS != 0 && pressed)
         {
             // driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
             // this.transform.position += -driver.transform.up * speed * Time.fixedDeltaTime * Mathf.Sign(WS);
             // driver.velocity = Vector3.Lerp(-driver.transform.up * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
-            driver.position += Vector3.forward * .5f * Mathf.Sign(WS);
-
+            driver.transform.localPosition += Vector3.forward * .5f * Mathf.Sign(WS);
+            // StartCoroutine(balls());
+            // pressed = false;
         }
+        print($"Post-move {this.transform.localPosition}");
         // if (AD != 0)
         // {
         //     driver.position = Vector3.right * 10f * Mathf.Sign(AD);
