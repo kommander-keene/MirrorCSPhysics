@@ -204,13 +204,14 @@ MonoBehaviour:
   positionSensitivity: 0.01
   rotationSensitivity: 0.01
   scaleSensitivity: 0.01
+  redudancyCapacity: 4
   MirrorPrefab: {fileID: 0}
   lastServerSendTime: 0
   frameSmoothing: 1
   predictRotation: 1
   errorMargin: 0.01
   correctionAmount: 0.1
-  noInputUpdateRate: 4
+  noInputUpdateRate: 5
   instaSnapError: 0
   CheckerSpawner: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
   timeStampAdjustment: 0

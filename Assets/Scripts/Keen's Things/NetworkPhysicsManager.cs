@@ -62,6 +62,10 @@ public class NetworkPhysicsManager : MonoBehaviour, INetworkRegistry
     #region Registry Methods
     public bool RegisterNetworkPhysicsObject(uint id, GameObject obj, bool local)
     {
+        if (physicsObjects.ContainsKey(id))
+        {
+            return false;
+        }
         physicsObjects.Add(id, obj);
         setNetworkedPhysics(obj);
         return true;

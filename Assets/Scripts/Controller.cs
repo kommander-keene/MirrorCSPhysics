@@ -65,7 +65,6 @@ public class Controller : NetworkBehaviour, IController
     #region shared 
     void Walk(float AD, float WS, float J)
     {
-        print($"Pre-move {this.transform.localPosition}");
         if (WS != 0 && pressed)
         {
             // driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
@@ -75,7 +74,6 @@ public class Controller : NetworkBehaviour, IController
             // StartCoroutine(balls());
             // pressed = false;
         }
-        print($"Post-move {this.transform.localPosition}");
         // if (AD != 0)
         // {
         //     driver.position = Vector3.right * 10f * Mathf.Sign(AD);

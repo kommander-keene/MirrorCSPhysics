@@ -1,6 +1,6 @@
 public struct InputCmd
 {
-    public double timestamp; // Used to match position IDs
+    public uint seq; // Used to match position IDs
     public float axis1, axis2, axis3;
     public int ticks; // tick . duration
     public static InputCmd Empty()
