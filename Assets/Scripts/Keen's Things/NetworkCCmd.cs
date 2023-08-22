@@ -77,11 +77,8 @@ namespace Mirror
         InputCmd currentCmd;
         bool validCmd = false;
         List<InputGroup> currentCmds;
-        GameObject mirrorPrefab;
-        GameObject mirrorClone;
         int numberCommands = 100;
         List<InputCmd> ReplayCommands;
-        bool down = false;
         int deltaCmdCount;
         int cmdCount = 0;
         public float errorMargin;
@@ -90,6 +87,7 @@ namespace Mirror
         public int noInputUpdateRate = 3;
         public float instaSnapError = 1;
         private uint seqSendUpdate;
+        private bool down;
 
         [Header("Debug")]
         public GameObject CheckerSpawner;
@@ -115,69 +113,71 @@ namespace Mirror
         }
         public void InputDown(InputCmd cmd)
         {
-            // StartCoroutine(WaitForPhysicsUpdate(cmd));
             RecordMoves(cmd);
             down = true;
         }
-
+        public void InputUp()
+        {
+            down = false;
+        }
         InputGroup NewInputGrouping()
         {
             InputGroup grp = new InputGroup(redudancyCapacity);
             grp.Fill(PreviousInputQueue.CommandArray());
             return grp;
         }
+        TRS_Snapshot emergencySnap;
         void RecordMoves(InputCmd cmd)
         {
             cmdCount++;
-            deltaCmdCount++;
-            if (!InputCmd.CmpActions(cmd, currentCmd))
+            if (InputCmd.CmpActions(cmd, currentCmd) && validCmd)
             {
-                // check if currentCommand is valid
-                if (validCmd)
-                {
-                    currentCmd.seq = seqSendUpdate++; // Give old command a sequence number
-                    currentCmd.ticks = deltaCmdCount; // How long had I been holding the button
-                    print($"Intermediate {deltaCmdCount}");
-                    if (deltaCmdCount > 0)
-                    {
-                        // If valid commands, add to list of intermediate commands
-                        PreviousInputQueue.Enqueue(currentCmd);
-                        currentCmds.Add(NewInputGrouping());
+                deltaCmdCount += 1;
+                currentCmd.ticks = deltaCmdCount; // Continue counting up!
+                // print("Repeated Command");
+                emergencySnap = CreateNewSnapshot(); // Create snapshot after the move
+            }
+            else if (validCmd && !InputCmd.CmpActions(cmd, currentCmd))
+            {
 
-                        // Do snapshot things / update snapshot to more accurate position
-                        uint seqNumber = currentCmd.seq;
-                        if (!SnapshotMap.ContainsKey(seqNumber))
-                        {
-                            TRS_Snapshot sn = CreateNewSnapshot();
-                            SnapshotMap.Add(seqNumber, sn);
-                            // Save the positions in my own lists
-                            if (ReplayCommands.Count < numberCommands)
-                            {
-                                // Increment commands to replay
-                                ReplayCommands.Add(currentCmd);
-                            }
-                        }
-                        currentCmd = cmd; // Update the current command
-                        deltaCmdCount = 1;
+                // print("Valid Prior");
+                // Add old command over
+                currentCmd.seq = seqSendUpdate++;
+                currentCmd.ticks = deltaCmdCount;
+                deltaCmdCount = 1;
+                // This is run on the first tick of the new action
+                PreviousInputQueue.Enqueue(currentCmd);
+                currentCmds.Add(NewInputGrouping());
+                uint seqNumber = currentCmd.seq;
+                // 
+                if (!SnapshotMap.ContainsKey(seqNumber))
+                {
+                    // print($"Creating Snapshot At {emergencySnap.position}");
+                    SnapshotMap.Add(seqNumber, emergencySnap);
+                    // Save the positions in my own lists
+                    if (ReplayCommands.Count < numberCommands)
+                    {
+                        // Increment commands to replay
+                        ReplayCommands.Add(currentCmd);
                     }
                 }
-                else
-                {
-                    // Previous command was invalid
-                    cmd.ticks = 1;
-                    currentCmd = cmd;
-                    validCmd = true;
-                }
+                currentCmd = cmd; // Update current command to the new command
+            }
+            else
+            {
+                // Signals to ignore the previous command.
+                deltaCmdCount = 1;
+                cmd.ticks = 1;
+                currentCmd = cmd;
+                // print("Invalid Prior");
+                validCmd = true; // The "list" is now populated with commands
+                emergencySnap = CreateNewSnapshot();
             }
         }
         IEnumerator WaitForPhysicsUpdate(InputCmd cmd)
         {
             yield return new WaitForFixedUpdate();
             RecordMoves(cmd);
-        }
-        public void InputUp()
-        {
-            down = false;
         }
 
         public void SetController(IController ctrl)
@@ -368,27 +368,27 @@ namespace Mirror
                 while (rcnt > 0)
                 {
                     InputGroup rcmd = currentCmds[rcnt - 1];
-                    print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
+                    // print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
                     CmdUpdateInputLists(rcmd, rcmd.Recent().seq); // Send this to the server
                     rcnt -= 1;
                 }
                 currentCmds.Clear();
-
-
-                if (SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
+                if (!down && SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
                 {
-                    // InputCmd emptyCmd = InputCmd.Empty(); // create and return a new completely empty command
-                    // double time = Time.time;
-                    // emptyCmd.ticks = 1;
+                    InputCmd emptyCommand = InputCmd.Empty();
+                    emptyCommand.seq = seqSendUpdate++;
+                    emptyCommand.ticks = 1;
 
-                    // SnapshotMap.Add(time, CreateNewSnapshot());
+                    PreviousInputQueue.Enqueue(emptyCommand);
+                    InputGroup toSendCmd = NewInputGrouping();
 
-                    // if (ReplayCommands.Count < numberCommands)
-                    // {
-                    //     ReplayCommands.Add(emptyCmd);
-                    // }
-                    // CmdUpdateInputLists(toSendCmd, time);
-                    // repeated = noInputUpdateRate;
+                    SnapshotMap.Add(emptyCommand.seq, CreateNewSnapshot());
+                    if (ReplayCommands.Count < numberCommands)
+                    {
+                        ReplayCommands.Add(emptyCommand);
+                    }
+                    CmdUpdateInputLists(toSendCmd, emptyCommand.seq);
+                    repeated = noInputUpdateRate;
                 }
 
                 // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals
@@ -405,7 +405,7 @@ namespace Mirror
                     }
 
                     var sn = CreateNewSnapshot();
-                    if (!SnapshotMap.ContainsKey(seqSendUpdate))
+                    if (!SnapshotMap.ContainsKey(currentCmd.seq))
                     {
                         SnapshotMap.Add(currentCmd.seq, sn);
                     }
@@ -413,9 +413,10 @@ namespace Mirror
                     {
                         SnapshotMap[currentCmd.seq] = sn;
                     }
-                    print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
+                    // print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
                     CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
                     deltaCmdCount = 0;
+                    validCmd = false;
                 }
                 repeated -= 1;
                 // Clear old snapshots and inputs
@@ -431,7 +432,7 @@ namespace Mirror
             {
                 InputQueue.Enqueue(cmd);
                 FastIQKeys.Add(id);
-                Debug.Assert(id == cmd.Recent().seq);
+                Debug.Assert(id == cmd.Recent().seq, $"id was {id} while the most recent command was {cmd.Recent().seq}");
             }
         }
         #region Networked Physics
@@ -569,8 +570,7 @@ namespace Mirror
 
             if (SnapshotMap.TryGetValue(id, out localSnap))
             {
-                print("Recieved " + id.ToString()
-            + $"[{serverSnap.position} vs {localSnap.position}]");
+
                 // Its in the queue!
                 float mgerror = (serverSnap.position - localSnap.position).magnitude;
                 bool skip = false;
@@ -582,10 +582,13 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
+                    print("Recieved " + id.ToString()
+            + $"[{serverSnap.position} vs {localSnap.position}]");
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else
                 {
+                    print("Recieved " + id.ToString());
                     ReplayCommands.Clear();
                 }
 

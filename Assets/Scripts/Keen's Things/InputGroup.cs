@@ -12,6 +12,13 @@ public struct InputGroup
         this.capacity = capacity;
         minLength = -1;
     }
+    public static InputGroup EmptyGroup(uint seqNumber)
+    {
+        InputGroup IMPT = new InputGroup(1);
+        IMPT.commands[0] = InputCmd.Empty();
+        IMPT.commands[0].seq = seqNumber;
+        return IMPT;
+    }
     public void Fill(InputCmd[] Inputs)
     {
         int m = Inputs.Length < capacity ? Inputs.Length : capacity;
@@ -37,6 +44,10 @@ public struct InputGroup
     public void Update(int i, InputCmd cmd)
     {
         commands[i] = cmd;
+    }
+    public void Update(int i, int ticks)
+    {
+        commands[i].ticks = ticks;
     }
     public int Count()
     {

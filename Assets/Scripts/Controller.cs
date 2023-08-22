@@ -58,7 +58,7 @@ public class Controller : NetworkBehaviour, IController
     IEnumerator balls()
     {
         yield return new WaitForSeconds(0.5f);
-        // jumperonied = true;
+        jumperonied = true;
         pressed = true;
     }
     bool pressed = true;
@@ -76,21 +76,21 @@ public class Controller : NetworkBehaviour, IController
             // pressed = false;
         }
         d_mv += transform.localPosition.ToString();
-        print("Moved: " + d_mv);
-        // if (AD != 0)
-        // {
-        //     driver.position = Vector3.right * 10f * Mathf.Sign(AD);
-        //     // driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
-        //     // this.transform.position += driver.transform.right * speed * Time.fixedDeltaTime * Mathf.Sign(AD);
-        //     // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
-        // }
-        // if (J != 0 && jumperonied)
-        // {
-        //     // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
-        //     driver.position = Vector3.up * 3.30f;
-        //     // jumperonied = false;
-        //     // StartCoroutine(balls());
-        // }
+        // print("Moved: " + d_mv);
+        if (AD != 0)
+        {
+            // driver.transform.localPosition += Vector3.right * .5f * Mathf.Sign(AD);
+            driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
+            // this.transform.position += driver.transform.right * speed * Time.fixedDeltaTime * Mathf.Sign(AD);
+            // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
+        }
+        if (J != 0 && jumperonied)
+        {
+            // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
+            // driver.position += Vector3.up * 3.30f;
+            // jumperonied = false;
+            StartCoroutine(balls());
+        }
         // if (WS != 0 || AD != 0)
         // {
         //     // Instantiate(cubePrefab, this.transform.position, Quaternion.identity);
