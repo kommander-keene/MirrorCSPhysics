@@ -38,7 +38,8 @@ namespace Mirror
         public const int MAX_INPUT_QUEUE = 1024;
 
         CircularQueueWrapper PreviousInputQueue;
-        SortedList<uint, InputGroup> InputQueue; // TODO Replace it with a FILO Queue. 
+        Queue<InputGroup> InputQueue; // TODO Replace it with a FILO Queue.
+        HashSet<uint> FastIQKeys;
         public int redudancyCapacity;
         Dictionary<uint, TRS_Snapshot> SnapshotMap;
 
@@ -74,7 +75,7 @@ namespace Mirror
         //
         // Keene
         InputCmd currentCmd;
-        bool validCmd;
+        bool validCmd = false;
         List<InputGroup> currentCmds;
         GameObject mirrorPrefab;
         GameObject mirrorClone;
@@ -82,7 +83,7 @@ namespace Mirror
         List<InputCmd> ReplayCommands;
         bool down = false;
         int deltaCmdCount;
-        int cmdCount;
+        int cmdCount = 0;
         public float errorMargin;
         public IController controller;
         public float correctionAmount = .1f;
@@ -98,7 +99,8 @@ namespace Mirror
             currentCmds = new List<InputGroup>();
             ReplayCommands = new List<InputCmd>();
             SnapshotMap = new Dictionary<uint, TRS_Snapshot>();
-            InputQueue = new SortedList<uint, InputGroup>();
+            InputQueue = new Queue<InputGroup>();
+            FastIQKeys = new();
             PreviousInputQueue = new CircularQueueWrapper(redudancyCapacity);
         }
         void Awake()
@@ -126,19 +128,16 @@ namespace Mirror
         }
         void RecordMoves(InputCmd cmd)
         {
-            if (InputCmd.CmpActions(cmd, currentCmd))
-            {
-                deltaCmdCount += 1;
-            }
-            else
+            cmdCount++;
+            deltaCmdCount++;
+            if (!InputCmd.CmpActions(cmd, currentCmd))
             {
                 // check if currentCommand is valid
                 if (validCmd)
                 {
-                    // Save commands in list
-                    currentCmd.seq = seqSendUpdate++;
-                    seqSendUpdate += 1;
-                    currentCmd.ticks = deltaCmdCount;
+                    currentCmd.seq = seqSendUpdate++; // Give old command a sequence number
+                    currentCmd.ticks = deltaCmdCount; // How long had I been holding the button
+                    print($"Intermediate {deltaCmdCount}");
                     if (deltaCmdCount > 0)
                     {
                         // If valid commands, add to list of intermediate commands
@@ -146,11 +145,11 @@ namespace Mirror
                         currentCmds.Add(NewInputGrouping());
 
                         // Do snapshot things / update snapshot to more accurate position
-                        double time = currentCmd.seq;
-                        if (SnapshotMap.Count == 0 || !SnapshotMap.ContainsKey(seqSendUpdate))
+                        uint seqNumber = currentCmd.seq;
+                        if (!SnapshotMap.ContainsKey(seqNumber))
                         {
                             TRS_Snapshot sn = CreateNewSnapshot();
-                            SnapshotMap.Add(seqSendUpdate, sn);
+                            SnapshotMap.Add(seqNumber, sn);
                             // Save the positions in my own lists
                             if (ReplayCommands.Count < numberCommands)
                             {
@@ -158,16 +157,16 @@ namespace Mirror
                                 ReplayCommands.Add(currentCmd);
                             }
                         }
-                        deltaCmdCount = 1;
                         currentCmd = cmd; // Update the current command
+                        deltaCmdCount = 1;
                     }
                 }
                 else
                 {
                     // Previous command was invalid
                     cmd.ticks = 1;
-                    deltaCmdCount = 1;
                     currentCmd = cmd;
+                    validCmd = true;
                 }
             }
         }
@@ -179,7 +178,6 @@ namespace Mirror
         public void InputUp()
         {
             down = false;
-            deltaCmdCount = 0;
         }
 
         public void SetController(IController ctrl)
@@ -261,9 +259,8 @@ namespace Mirror
         InputCmd server_replayCmd;
         uint serverReplaySID;
         uint lastSeqNumber;
-        int prevSnapshotCount = 0;
+        int interGroupOffset = 0;
         int repeated = 1;
-        Vector3 remember;
         [ClientRpc]
         void RpcAckOutOfOrder(uint packetID)
         {
@@ -272,65 +269,86 @@ namespace Mirror
         }
         uint MostRecentKey()
         {
-            int last = InputQueue.Count - 1;
-            return InputQueue.Keys[last];
+            return InputQueue.Peek().Recent().seq;
         }
         InputCmd MostRecentCommand()
         {
-            // InputQueue[MostRecentKey()].DebugGroup();
-            return InputQueue[MostRecentKey()].Recent();
+            return InputQueue.Peek().Recent();
+        }
+        uint MostRecentKey(int i)
+        {
+            return InputQueue.Peek().Get(i).seq;
+        }
+        InputCmd MostRecentCommand(int i)
+        {
+            return InputQueue.Peek().Get(i);
         }
         void RecieveRemoteCommands()
         {
-            if (!toReplay && InputQueue.Count > 0)
+            if (!toReplay && InputQueue.Count > 0 && interGroupOffset == 0)
             {
-                // serverReplaySID = MostRecentKey();
-                // server_replayCmd = MostRecentCommand();
+                serverReplaySID = MostRecentKey(interGroupOffset);
+                server_replayCmd = MostRecentCommand(interGroupOffset);
                 // They are different so, it means we havent deducted from replayed ticks yet
                 replayed_ticks = server_replayCmd.ticks;
                 toReplay = true; // Set an id so this doesn't get hit twice
             }
-            print($"({serverReplaySID}) {replayed_ticks}");
-            // RECIEVING AND REPLAYING COMMANDS FROM SERVER!!!
             if (InputQueue.Count > 0)
             {
-                // TODO still a minor bug where extremely button presses will cause mismatch.
-                // Extremely hard to reproduce, so ignore this for now. :(
 
                 if (replayed_ticks > 0)
                 {
-                    serverReplaySID = MostRecentKey();
-                    server_replayCmd = MostRecentCommand();
-                    // This is just incase the command changes or something due to the sorts
+                    print("Playback " + serverReplaySID.ToString() + $"({replayed_ticks})");
                     controller.ReplayingInputs(server_replayCmd);
-
                     replayed_ticks -= 1;
                     replayed += 1;
                 }
                 else
                 {
 
-                    toReplay = false;
-                    // Generate new endpoint to send back to client
-                    TRS_Snapshot replySnap = CreateNewSnapshot();
-                    lastSeqNumber = serverReplaySID; // To keep track of last replayed ID
-                                                     // print("Sent ServerID is " + server_replayID);
-                    remember = transform.position;
-                    RpcRecvPosition(serverReplaySID, replySnap);
-                    InputQueue.Remove(serverReplaySID); // Pop the most recent action. Move onto the next one
-                                                        // Pop next one
-                    if (InputQueue.Count > 0)
+                    if (interGroupOffset == 0)
                     {
+                        toReplay = false;
+                        // Generate new endpoint to send back to client
+                        TRS_Snapshot replySnap = CreateNewSnapshot();
+                        lastSeqNumber = serverReplaySID; // To keep track of last replayed ID
+                        print("Reply " + serverReplaySID.ToString() + $"({replySnap.position})");
+                        RpcRecvPosition(lastSeqNumber, replySnap);
+                        InputQueue.Dequeue();
+                        FastIQKeys.Remove(serverReplaySID);
+                    }
+                    else
+                    {
+                        TRS_Snapshot replySnap = CreateNewSnapshot(); // Create New Snapshot
+                        lastSeqNumber = MostRecentKey(interGroupOffset);
+                        RpcRecvPosition(lastSeqNumber, replySnap);
+                        // Don't remove from the input queue yet
+                        interGroupOffset -= 1; // Go back by one step
+                    }
+                    if (InputQueue.Count > 0 && interGroupOffset == 0 && lastSeqNumber + 1 != MostRecentKey(interGroupOffset))
+                    {
+                        // Handles doing offsets
+                        print($"Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
+                        uint diff = MostRecentKey() - lastSeqNumber + 1;
+                        interGroupOffset = (int)diff;
+                        serverReplaySID = MostRecentKey(interGroupOffset);
+                        server_replayCmd = MostRecentCommand(interGroupOffset);
+                    }
+                    else if (InputQueue.Count > 0 && interGroupOffset == 0 && serverReplaySID < lastSeqNumber)
+                    {
+                        // Eg. 91 < 93 then its out of order
                         server_replayCmd = MostRecentCommand();
                         serverReplaySID = MostRecentKey();
 
+                        print($"Out of Order: {serverReplaySID} < {lastSeqNumber}");
                         bool outOfOrder = serverReplaySID < lastSeqNumber;
-
                         while (InputQueue.Count > 0 && outOfOrder)
                         {
                             server_replayCmd = MostRecentCommand();
                             serverReplaySID = MostRecentKey();
-                            InputQueue.Remove(serverReplaySID);
+                            InputQueue.Dequeue();
+                            FastIQKeys.Remove(serverReplaySID);
+                            // Let client know
                             RpcAckOutOfOrder(serverReplaySID);
                         }
 
@@ -350,6 +368,7 @@ namespace Mirror
                 while (rcnt > 0)
                 {
                     InputGroup rcmd = currentCmds[rcnt - 1];
+                    print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
                     CmdUpdateInputLists(rcmd, rcmd.Recent().seq); // Send this to the server
                     rcnt -= 1;
                 }
@@ -388,14 +407,14 @@ namespace Mirror
                     var sn = CreateNewSnapshot();
                     if (!SnapshotMap.ContainsKey(seqSendUpdate))
                     {
-                        SnapshotMap.Add(seqSendUpdate, sn);
+                        SnapshotMap.Add(currentCmd.seq, sn);
                     }
                     else
                     {
-                        SnapshotMap[seqSendUpdate] = sn;
+                        SnapshotMap[currentCmd.seq] = sn;
                     }
-                    toSendCmd.DebugGroup();
-                    CmdUpdateInputLists(toSendCmd, seqSendUpdate);
+                    print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
+                    CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
                     deltaCmdCount = 0;
                 }
                 repeated -= 1;
@@ -407,9 +426,12 @@ namespace Mirror
         [Command(channel = Channels.Unreliable)]
         void CmdUpdateInputLists(InputGroup cmd, uint id)
         {
-            if (InputQueue.Count < MAX_INPUT_QUEUE && !InputQueue.ContainsKey(id))
+
+            if (InputQueue.Count < MAX_INPUT_QUEUE && !FastIQKeys.Contains(id))
             {
-                InputQueue.Add(id, cmd);
+                InputQueue.Enqueue(cmd);
+                FastIQKeys.Add(id);
+                Debug.Assert(id == cmd.Recent().seq);
             }
         }
         #region Networked Physics
@@ -539,14 +561,16 @@ namespace Mirror
 
         }
         double lastRecievedTime = -1.0;
-        [ClientRpc(channel = Channels.Unreliable)]
+        [ClientRpc]
         void RpcRecvPosition(uint id, TRS_Snapshot serverSnap)
         {
-            if (!isLocalPlayer || !isClient) return;
+            if (!isLocalPlayer || isServer) return;
             TRS_Snapshot localSnap;
 
             if (SnapshotMap.TryGetValue(id, out localSnap))
             {
+                print("Recieved " + id.ToString()
+            + $"[{serverSnap.position} vs {localSnap.position}]");
                 // Its in the queue!
                 float mgerror = (serverSnap.position - localSnap.position).magnitude;
                 bool skip = false;
@@ -571,6 +595,8 @@ namespace Mirror
             }
             else if (SnapshotMap.Count > 0)
             {
+                print("Recieved " + id.ToString()
+            + $"!![{serverSnap.position}] NOT FOUND IN SNAPMAP");
                 // Automatically perform corrections
                 DoPositionErrorCorrect(id, serverSnap);
             }
