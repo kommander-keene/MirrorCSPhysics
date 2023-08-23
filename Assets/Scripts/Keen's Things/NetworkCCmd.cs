@@ -60,6 +60,8 @@ namespace Mirror
         // public bool timelineOffset = false;
         public int frameSmoothing;
         public bool predictRotation;
+        public float broadcastInterval;
+
         // Ninja's Notes on offset & mulitplier:
         // 
         // In a no multiplier scenario:
@@ -195,19 +197,19 @@ namespace Mirror
         protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
         {
             // If I am not the local player then I do whatever!
-            // if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotMap.Count == 0 && ReplayCommands.Count == 0))
-            // {
-            //     Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
-            //     Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
-            //     if (syncPosition)
-            //         target.localPosition = interpolatePosition ? lerpedInterPosition : lerpedEndPosition;
+            if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotMap.Count == 0 && ReplayCommands.Count == 0))
+            {
+                Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
+                Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
+                if (syncPosition)
+                    target.localPosition = interpolatePosition ? lerpedInterPosition : lerpedEndPosition;
 
-            //     if (syncRotation)
-            //         target.localRotation = interpolateRotation ? interpolated.rotation : endGoal.rotation;
+                if (syncRotation)
+                    target.localRotation = interpolateRotation ? interpolated.rotation : endGoal.rotation;
 
-            //     if (syncScale)
-            //         target.localScale = interpolateScale ? interpolated.scale : endGoal.scale;
-            // }
+                if (syncScale)
+                    target.localScale = interpolateScale ? interpolated.scale : endGoal.scale;
+            }
         }
         // update //////////////////////////////////////////////////////////////
         // Update applies interpolation
@@ -303,9 +305,14 @@ namespace Mirror
                     replayed_ticks -= 1;
                     replayed += 1;
                 }
-                else
+                /* Keene's notes for the future
+                * there existed a tiny bug here.
+                * earlier it was an if-else statement, but this would result in inconsistencies when updating vel/acceleration.
+                * this is due to the fact that there would be ticks occasionally skipped just to upload everything. Resulting in errors.
+                */
+                if (replayed_ticks == 0)
                 {
-
+                    //TODO the offsets thing is currently untested!
                     if (interGroupOffset == 0)
                     {
                         toReplay = false;
@@ -354,21 +361,18 @@ namespace Mirror
 
                     }
                 }
-
-
-
             }
         }
         void BroadcastLocalInputs()
         {
             // Only executed on local clients
-            if (NetworkTime.localTime >= lastClientSendTime + NetworkClient.sendInterval)
+            if (NetworkTime.localTime >= lastClientSendTime + broadcastInterval)
             {
                 int rcnt = currentCmds.Count;
                 while (rcnt > 0)
                 {
                     InputGroup rcmd = currentCmds[rcnt - 1];
-                    // print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
+                    print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
                     CmdUpdateInputLists(rcmd, rcmd.Recent().seq); // Send this to the server
                     rcnt -= 1;
                 }
@@ -413,7 +417,7 @@ namespace Mirror
                     {
                         SnapshotMap[currentCmd.seq] = sn;
                     }
-                    // print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
+                    print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
                     CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
                     deltaCmdCount = 0;
                     validCmd = false;
@@ -583,7 +587,7 @@ namespace Mirror
                 if (!skip && mgerror > errorMargin)
                 {
                     print("Recieved " + id.ToString()
-            + $"[{serverSnap.position} vs {localSnap.position}]");
+                    + $"[{serverSnap.position} vs {localSnap.position}]");
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else

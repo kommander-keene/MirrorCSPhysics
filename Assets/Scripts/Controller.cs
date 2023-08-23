@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections;
 using UnityEngine;
 using Mirror;
+using System.Collections.Specialized;
 
 public class Controller : NetworkBehaviour, IController
 {
@@ -59,36 +60,32 @@ public class Controller : NetworkBehaviour, IController
     {
         yield return new WaitForSeconds(0.5f);
         jumperonied = true;
-        pressed = true;
     }
-    bool pressed = true;
     #region shared 
     void Walk(float AD, float WS, float J)
     {
-        var d_mv = $"{transform.localPosition} -> ";
-        if (WS != 0 && pressed)
+        if (WS != 0)
         {
-            // driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
+            driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
             // this.transform.position += -driver.transform.up * speed * Time.fixedDeltaTime * Mathf.Sign(WS);
             // driver.velocity = Vector3.Lerp(-driver.transform.up * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
-            driver.transform.localPosition += Vector3.forward * .5f * Mathf.Sign(WS);
+            // driver.transform.localPosition += Vector3.forward * .5f * Mathf.Sign(WS);
             // StartCoroutine(balls());
             // pressed = false;
         }
-        d_mv += transform.localPosition.ToString();
-        // print("Moved: " + d_mv);
+
         if (AD != 0)
         {
             // driver.transform.localPosition += Vector3.right * .5f * Mathf.Sign(AD);
             driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
-            // this.transform.position += driver.transform.right * speed * Time.fixedDeltaTime * Mathf.Sign(AD);
+            // this.transform.position += Vector3.right * 1.2f * (numberOfCommands <= 50 ? -1 : 1);
             // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
         }
         if (J != 0 && jumperonied)
         {
-            // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
+            driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
             // driver.position += Vector3.up * 3.30f;
-            // jumperonied = false;
+            jumperonied = false;
             StartCoroutine(balls());
         }
         // if (WS != 0 || AD != 0)
