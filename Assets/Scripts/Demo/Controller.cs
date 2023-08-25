@@ -12,7 +12,7 @@ public class Controller : NetworkBehaviour, IController
     Rigidbody driver;
     public GameObject cubePrefab;
     public GameObject name;
-    private NetworkCCmd netCmdMg;
+    private CSNetworkTransform netCmdMg;
     public float speed;
     // Start is called before the first frame update
     bool hasInput()
@@ -22,7 +22,7 @@ public class Controller : NetworkBehaviour, IController
     void Start()
     {
         driver = GetComponent<Rigidbody>();
-        netCmdMg = GetComponent<NetworkCCmd>();
+        netCmdMg = GetComponent<CSNetworkTransform>();
         netCmdMg.SetController(this);
         name = GameObject.Find("CubeName");
     }

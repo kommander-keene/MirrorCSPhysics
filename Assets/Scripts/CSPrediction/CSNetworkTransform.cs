@@ -6,11 +6,12 @@ using System.Collections;
 using System.Collections.Generic;
 using System;
 using System.Globalization;
+using System.Data;
 
 namespace Mirror
 {
     [AddComponentMenu("Network/Network Command Transform")]
-    public class NetworkCCmd : NetworkTransformBase
+    public class CSNetworkTransform : NetworkTransformBase
     {
         // only sync when changed hack /////////////////////////////////////////
 #if onlySyncOnChange_BANDWIDTH_SAVING
@@ -62,6 +63,7 @@ namespace Mirror
         public int frameSmoothing;
         public bool predictRotation;
         public float broadcastInterval;
+        public float replyInterval;
 
         // Ninja's Notes on offset & mulitplier:
         // 
@@ -92,8 +94,20 @@ namespace Mirror
         private uint seqSendUpdate;
         private bool down;
 
+        struct DelayReply
+        {
+            public TRS_Snapshot snapshot;
+            public uint mappingID;
+            public DelayReply(TRS_Snapshot snp, uint mID)
+            {
+                mappingID = mID;
+                snapshot = snp;
+            }
+        }
+        Queue<DelayReply> DelayReplyQueue;
         [Header("Debug")]
         public GameObject CheckerSpawner;
+
 
         private void InitializeLists()
         {
@@ -103,7 +117,7 @@ namespace Mirror
             InputQueue = new Queue<InputGroup>();
             FastIQKeys = new();
             PreviousInputQueue = new CircularQueueWrapper(redudancyCapacity);
-
+            DelayReplyQueue = new Queue<DelayReply>();
             smnr = GetComponent<SlightlyModifiedNetworkRigidbody>();
             smnr.IgnoreSync = isLocalPlayer;
         }
@@ -180,12 +194,23 @@ namespace Mirror
                 emergencySnap = CreateNewSnapshot();
             }
         }
-        IEnumerator WaitForPhysicsUpdate(InputCmd cmd)
-        {
-            yield return new WaitForFixedUpdate();
-            RecordMoves(cmd);
-        }
 
+        void DelayReplyEnq(uint id, TRS_Snapshot snapshot)
+        {
+            DelayReply dr = new(snapshot, id);
+            DelayReplyQueue.Enqueue(dr);
+        }
+        void DelayReplyChecker()
+        {
+            if (NetworkTime.localTime >= lastClientSendTime + replyInterval)
+            {
+                while (DelayReplyQueue.Count > 0)
+                {
+                    DelayReply reply = DelayReplyQueue.Dequeue();
+                    RpcRecvPosition(reply.mappingID, reply.snapshot);
+                }
+            }
+        }
         public void SetController(IController ctrl)
         {
             controller = ctrl;
@@ -203,10 +228,8 @@ namespace Mirror
             // If I am not the local player then I do whatever!
             if (!isLocalPlayer)
             {
-                Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
-                Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
                 if (syncPosition)
-                    target.localPosition = interpolatePosition ? lerpedInterPosition : lerpedEndPosition;
+                    target.localPosition = interpolatePosition ? interpolated.position : endGoal.position;
 
                 if (syncRotation)
                     target.localRotation = interpolateRotation ? interpolated.rotation : endGoal.rotation;
@@ -257,6 +280,7 @@ namespace Mirror
             {
                 //RECIEVE (SERVER)
                 RecieveRemoteCommands();
+                DelayReplyChecker();
             }
         }
 
@@ -344,7 +368,7 @@ namespace Mirror
                         TRS_Snapshot replySnap = CreateNewSnapshot();
                         lastSeqNumber = serverReplaySID; // To keep track of last replayed ID
                         print($"{replayed} Reply " + serverReplaySID.ToString() + $"({replySnap.position})");
-                        RpcRecvPosition(lastSeqNumber, replySnap);
+                        DelayReplyEnq(lastSeqNumber, replySnap);
                         InputQueue.Dequeue();
                         FastIQKeys.Remove(serverReplaySID);
                     }
@@ -354,7 +378,7 @@ namespace Mirror
                         // Generate new endpoint to send back to client
                         TRS_Snapshot replySnap = CreateNewSnapshot(); // Create New Snapshot
                         lastSeqNumber = MostRecentKey(interGroupOffset); // Last Replayed ID
-                        RpcRecvPosition(lastSeqNumber, replySnap);
+                        DelayReplyEnq(lastSeqNumber, replySnap);
                         print($"{replayed} Reply S " + serverReplaySID.ToString() + $"({replySnap.position})");
                         // Don't remove from the input queue yet
                         interGroupOffset -= 1; // Go back by one step
