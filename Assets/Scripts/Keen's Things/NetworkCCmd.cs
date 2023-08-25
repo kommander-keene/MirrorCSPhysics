@@ -399,20 +399,20 @@ namespace Mirror
                 currentCmds.Clear();
                 if (!down && SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
                 {
-                    // InputCmd emptyCommand = InputCmd.Empty();
-                    // emptyCommand.seq = seqSendUpdate++;
-                    // emptyCommand.ticks = 1;
+                    InputCmd emptyCommand = InputCmd.Empty();
+                    emptyCommand.seq = seqSendUpdate++;
+                    emptyCommand.ticks = 1;
 
-                    // PreviousInputQueue.Enqueue(emptyCommand);
-                    // InputGroup toSendCmd = NewInputGrouping();
+                    PreviousInputQueue.Enqueue(emptyCommand);
+                    InputGroup toSendCmd = NewInputGrouping();
 
-                    // SnapshotMap.Add(emptyCommand.seq, CreateNewSnapshot());
-                    // if (ReplayCommands.Count < numberCommands)
-                    // {
-                    //     ReplayCommands.Add(emptyCommand);
-                    // }
-                    // CmdUpdateInputLists(toSendCmd, emptyCommand.seq);
-                    // repeated = noInputUpdateRate;
+                    SnapshotMap.Add(emptyCommand.seq, CreateNewSnapshot());
+                    if (ReplayCommands.Count < numberCommands)
+                    {
+                        ReplayCommands.Add(emptyCommand);
+                    }
+                    CmdUpdateInputLists(toSendCmd, emptyCommand.seq);
+                    repeated = noInputUpdateRate;
                 }
 
                 // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals

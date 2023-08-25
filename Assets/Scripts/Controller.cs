@@ -3,6 +3,8 @@ using System.Collections;
 using UnityEngine;
 using Mirror;
 using System.Collections.Specialized;
+using System;
+using UnityEngine.AI;
 
 public class Controller : NetworkBehaviour, IController
 {
@@ -25,7 +27,8 @@ public class Controller : NetworkBehaviour, IController
         name = GameObject.Find("CubeName");
     }
     bool jumperonied = true;
-    // Update is called once per frame
+    // Update is called once per frame\
+    int MSPassed = 0;
     void FixedUpdate()
     {
         if (isLocalPlayer && hasInput())
@@ -45,7 +48,11 @@ public class Controller : NetworkBehaviour, IController
         {
             netCmdMg.InputUp();
         }
-
+        if (MSPassed < 30)
+        {
+            MSPassed++;
+            print(MSPassed);
+        }
     }
     public void ReplayingInputs(InputCmd cmd)
     {
@@ -55,39 +62,32 @@ public class Controller : NetworkBehaviour, IController
     }
     int time_run = 0;
     int time_run2 = 0;
-
-    IEnumerator balls()
-    {
-        yield return new WaitForSeconds(0.5f);
-        jumperonied = true;
-    }
     #region shared 
     void Walk(float AD, float WS, float J)
     {
         if (WS != 0)
         {
-            // driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
+            driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
             // driver.velocity = Vector3.Lerp(-driver.transform.up * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
             // driver.transform.localPosition += Vector3.forward * .5f * Mathf.Sign(WS);
             // StartCoroutine(balls());
             // pressed = false;
-            driver.transform.localPosition = Vector3.zero;
+            // driver.transform.localPosition = Vector3.zero;
         }
 
         if (AD != 0)
         {
             // driver.transform.localPosition += Vector3.right * .5f * Mathf.Sign(AD);
-            // driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
+            driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
             // this.transform.position += Vector3.right * 1.2f * (numberOfCommands <= 50 ? -1 : 1);
             // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
         }
         print($"Jump Stats {jumperonied}");
-        if (J != 0 && jumperonied)
+        if (J != 0 && MSPassed == 30)
         {
             // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
             driver.position += Vector3.up * 10f;
-            // jumperonied = false;
-            // StartCoroutine(balls());
+            MSPassed = 0;
         }
         // if (WS != 0 || AD != 0)
         // {
