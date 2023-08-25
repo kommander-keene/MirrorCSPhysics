@@ -326,8 +326,9 @@ namespace Mirror
 
                 if (replayed_ticks > 0)
                 {
-                    print($"{replayed} Playback " + serverReplaySID.ToString() + $"({replayed_ticks})");
+                    print($"{replayed} Playback PRE " + $"{server_replayCmd.axis3} ({target.transform.position})");
                     controller.ReplayingInputs(server_replayCmd);
+                    print($"{replayed} Playback POST" + $"{server_replayCmd.axis3} ({target.transform.position})");
                     replayed_ticks -= 1;
                 }
                 if (replayed_ticks == 0)
@@ -398,20 +399,20 @@ namespace Mirror
                 currentCmds.Clear();
                 if (!down && SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0 && repeated <= 0) // target.GetComponent<Rigidbody>().velocity == Vector3.zero && 
                 {
-                    InputCmd emptyCommand = InputCmd.Empty();
-                    emptyCommand.seq = seqSendUpdate++;
-                    emptyCommand.ticks = 1;
+                    // InputCmd emptyCommand = InputCmd.Empty();
+                    // emptyCommand.seq = seqSendUpdate++;
+                    // emptyCommand.ticks = 1;
 
-                    PreviousInputQueue.Enqueue(emptyCommand);
-                    InputGroup toSendCmd = NewInputGrouping();
+                    // PreviousInputQueue.Enqueue(emptyCommand);
+                    // InputGroup toSendCmd = NewInputGrouping();
 
-                    SnapshotMap.Add(emptyCommand.seq, CreateNewSnapshot());
-                    if (ReplayCommands.Count < numberCommands)
-                    {
-                        ReplayCommands.Add(emptyCommand);
-                    }
-                    CmdUpdateInputLists(toSendCmd, emptyCommand.seq);
-                    repeated = noInputUpdateRate;
+                    // SnapshotMap.Add(emptyCommand.seq, CreateNewSnapshot());
+                    // if (ReplayCommands.Count < numberCommands)
+                    // {
+                    //     ReplayCommands.Add(emptyCommand);
+                    // }
+                    // CmdUpdateInputLists(toSendCmd, emptyCommand.seq);
+                    // repeated = noInputUpdateRate;
                 }
 
                 // PROP: Have some external variable keep track of input cmd ticks. Have another keep track of sending between intervals
@@ -427,14 +428,10 @@ namespace Mirror
                         ReplayCommands.Add(currentCmd);
                     }
 
-                    var sn = CreateNewSnapshot();
+                    var sn = emergencySnap;
                     if (!SnapshotMap.ContainsKey(currentCmd.seq))
                     {
                         SnapshotMap.Add(currentCmd.seq, sn);
-                    }
-                    else
-                    {
-                        SnapshotMap[currentCmd.seq] = sn;
                     }
 
                     print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
@@ -516,8 +513,8 @@ namespace Mirror
                     // Simulate it forwards by a delta time
                     manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
                     // Update my shit
-                    var sn = CreateNewSnapshot();
-                    SnapshotMap[pvKey] = sn;
+                    // var sn = CreateNewSnapshot();
+                    // SnapshotMap[pvKey] = sn;
                     iteration -= 1;
                 }
                 ReplayCommands.Clear();
