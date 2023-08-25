@@ -26,9 +26,17 @@ public class Controller : NetworkBehaviour, IController
         netCmdMg.SetController(this);
         name = GameObject.Find("CubeName");
     }
-    bool jumperonied = true;
-    // Update is called once per frame\
-    int MSPassed = 0;
+    IEnumerator Timer()
+    {
+        yield return new WaitForFixedUpdate();
+
+        while (MSPassed < 30)
+        {
+            MSPassed += 1;
+            yield return new WaitForFixedUpdate();
+        }
+    }
+    int MSPassed = 30;
     void FixedUpdate()
     {
         if (isLocalPlayer && hasInput())
@@ -47,11 +55,6 @@ public class Controller : NetworkBehaviour, IController
         else if (!hasInput())
         {
             netCmdMg.InputUp();
-        }
-        if (MSPassed < 30)
-        {
-            MSPassed++;
-            print(MSPassed);
         }
     }
     public void ReplayingInputs(InputCmd cmd)
@@ -82,12 +85,12 @@ public class Controller : NetworkBehaviour, IController
             // this.transform.position += Vector3.right * 1.2f * (numberOfCommands <= 50 ? -1 : 1);
             // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
         }
-        print($"Jump Stats {jumperonied}");
         if (J != 0 && MSPassed == 30)
         {
             // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
             driver.position += Vector3.up * 10f;
             MSPassed = 0;
+            StartCoroutine(Timer());
         }
         // if (WS != 0 || AD != 0)
         // {
