@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using Mirror;
 using UnityEngine;
 
-public class RegisterNetworkPhysicsObject : MonoBehaviour
+public class RegisterNetPhysics : MonoBehaviour
 {
     uint myID;
     IEnumerator Go()
