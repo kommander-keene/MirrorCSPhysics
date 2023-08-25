@@ -16,6 +16,7 @@ GameObject:
   - component: {fileID: 5109106629795551829}
   - component: {fileID: 5109106629795551828}
   - component: {fileID: 105281856982536590}
+  - component: {fileID: -7875665576442138167}
   m_Layer: 0
   m_Name: Capsule
   m_TagString: Untagged
@@ -207,6 +208,7 @@ MonoBehaviour:
   redudancyCapacity: 4
   MirrorPrefab: {fileID: 0}
   lastServerSendTime: 0
+  useMirrorInterpolation: 0
   frameSmoothing: 3
   predictRotation: 1
   broadcastInterval: 0.016666668
@@ -217,3 +219,27 @@ MonoBehaviour:
   CheckerSpawner: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
   timeStampAdjustment: 0
   offset: 0
+--- !u!114 &-7875665576442138167
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5109106629795551823}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d82453a6b37a96f47872a33b05eaa121, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+  target: {fileID: 5109106629795551822}
+  clientAuthority: 0
+  syncVelocity: 1
+  clearVelocity: 0
+  velocitySensitivity: 0.1
+  syncAngularVelocity: 1
+  clearAngularVelocity: 0
+  angularVelocitySensitivity: 0.1
+  IgnoreSync: 0

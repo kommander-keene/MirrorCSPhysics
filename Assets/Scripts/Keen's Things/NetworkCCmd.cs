@@ -56,6 +56,7 @@ namespace Mirror
         const uint sendIntervalMultiplier = 1; // not implemented yet
 
         [Header("Snapshot Interpolation")]
+        public bool useMirrorInterpolation; // Only handles transforms and not rigidbodies
         // [Tooltip("Add a small timeline offset to account for decoupled arrival of NetworkTime and NetworkTransform snapshots.\nfixes: https://github.com/MirrorNetworking/Mirror/issues/3427")]
         // public bool timelineOffset = false;
         public int frameSmoothing;
@@ -74,9 +75,9 @@ namespace Mirror
         // 2. Time Interpolation remains 'behind by 2 frames'.
         // When everything works, we are receiving NT snapshots every 10 frames, but start interpolating after 2. 
         // Even if I assume we had 2 snapshots to begin with to start interpolating (which we don't), by the time we reach 13th frame, we are out of snapshots, and have to wait 7 frames for next snapshot to come. This is the reason why we absolutely need the timestamp adjustment. We are starting way too early to interpolate. 
-        //
-        // Keene
+
         InputCmd currentCmd;
+        SlightlyModifiedNetworkRigidbody smnr;
         bool validCmd = false;
         List<InputGroup> currentCmds;
         int numberCommands = 100;
@@ -102,6 +103,9 @@ namespace Mirror
             InputQueue = new Queue<InputGroup>();
             FastIQKeys = new();
             PreviousInputQueue = new CircularQueueWrapper(redudancyCapacity);
+
+            smnr = GetComponent<SlightlyModifiedNetworkRigidbody>();
+            smnr.IgnoreSync = isLocalPlayer;
         }
         void Awake()
         {
