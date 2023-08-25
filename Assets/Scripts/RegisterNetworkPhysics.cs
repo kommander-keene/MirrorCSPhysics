@@ -2,7 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class Ballz : MonoBehaviour
+public class RegisterNetworkPhysics : MonoBehaviour
 {
     IEnumerator Go()
     {
