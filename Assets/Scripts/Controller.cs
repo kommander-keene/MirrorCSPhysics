@@ -37,8 +37,9 @@ public class Controller : NetworkBehaviour, IController
             cmd.axis1 = AD;
             cmd.axis2 = WS;
             cmd.axis3 = J;
+            cmd.canJump = jumperonied;
             time_run2 += 1;
-            Walk(AD, WS, J); // Effects Local Client
+            Walk(AD, WS, J, false, false); // Effects Local Client
             netCmdMg.InputDown(cmd);
         }
         else if (!hasInput())
@@ -51,7 +52,7 @@ public class Controller : NetworkBehaviour, IController
     {
         if (isLocalPlayer) return;
         // print($"Trying to replay! {isClient} {isServer} {isLocalPlayer}");
-        Walk(cmd.axis1, cmd.axis2, cmd.axis3);
+        Walk(cmd.axis1, cmd.axis2, cmd.axis3, cmd.canJump, true);
     }
     int time_run = 0;
     int time_run2 = 0;
@@ -62,7 +63,7 @@ public class Controller : NetworkBehaviour, IController
         jumperonied = true;
     }
     #region shared 
-    void Walk(float AD, float WS, float J)
+    void Walk(float AD, float WS, float J, bool canJump, bool replay = false)
     {
         if (WS != 0)
         {
@@ -81,12 +82,16 @@ public class Controller : NetworkBehaviour, IController
             // this.transform.position += Vector3.right * 1.2f * (numberOfCommands <= 50 ? -1 : 1);
             // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
         }
-        if (J != 0 && jumperonied)
+        if (!replay && J != 0 && jumperonied || (replay && canJump))
         {
-            driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
-            // driver.position += Vector3.up * 3.30f;
-            jumperonied = false;
-            StartCoroutine(balls());
+            // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
+            driver.position += Vector3.up * 3.30f;
+            jumperonied = replay ? canJump : false;
+            if (!replay)
+            {
+                StartCoroutine(balls());
+            }
+
         }
         // if (WS != 0 || AD != 0)
         // {

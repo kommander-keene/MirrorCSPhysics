@@ -197,7 +197,7 @@ namespace Mirror
         protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
         {
             // If I am not the local player then I do whatever!
-            if (!isLocalPlayer || (GetComponent<Rigidbody>().velocity == Vector3.zero && SnapshotMap.Count == 0 && ReplayCommands.Count == 0))
+            if (!isLocalPlayer)
             {
                 Vector3 lerpedInterPosition = Vector3.Slerp(this.transform.localPosition, interpolated.position, 0.1f);
                 Vector3 lerpedEndPosition = Vector3.Slerp(this.transform.localPosition, endGoal.position, 0.1f);
@@ -258,11 +258,7 @@ namespace Mirror
 
 
 
-        InputCmd server_replayCmd;
-        uint serverReplaySID;
-        uint lastSeqNumber;
-        int interGroupOffset = 0;
-        int repeated = 1;
+
         [ClientRpc]
         void RpcAckOutOfOrder(uint packetID)
         {
@@ -285,63 +281,81 @@ namespace Mirror
         {
             return InputQueue.Peek().Get(i);
         }
+        InputCmd server_replayCmd;
+        uint serverReplaySID;
+        uint lastSeqNumber;
+        int interGroupOffset = 0;
+        int repeated = 1;
+        bool valid;
         void RecieveRemoteCommands()
         {
-            if (!toReplay && InputQueue.Count > 0 && interGroupOffset == 0)
-            {
-                serverReplaySID = MostRecentKey(interGroupOffset);
-                server_replayCmd = MostRecentCommand(interGroupOffset);
-                // They are different so, it means we havent deducted from replayed ticks yet
-                replayed_ticks = server_replayCmd.ticks;
-                toReplay = true; // Set an id so this doesn't get hit twice
-            }
+            bool validSwitch = false;
             if (InputQueue.Count > 0)
             {
+                if (!toReplay || !valid)
+                {
+                    serverReplaySID = MostRecentKey(interGroupOffset);
+                    server_replayCmd = MostRecentCommand(interGroupOffset);
+                    print($"{replayed} Setting {serverReplaySID}");
+                    // They are different so, it means we havent deducted from replayed ticks yet
+                    replayed_ticks = server_replayCmd.ticks;
+                    toReplay = true; // Set an id so this doesn't get hit twice
+                    if (valid == false)
+                    {
+                        validSwitch = true;
+                    }
+                    valid = true; // Force a first iteration
+                }
+                if (validSwitch && serverReplaySID != 0)
+                {
+                    // I did not recieve a zero first tick
+                    print($"{replayed} Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
+                    interGroupOffset = (int)serverReplaySID;
+                    serverReplaySID = MostRecentKey(interGroupOffset);
+                    server_replayCmd = MostRecentCommand(interGroupOffset);
+                }
+                else if (!validSwitch && interGroupOffset == 0 && lastSeqNumber + 1 != serverReplaySID)
+                {
+                    // Handles doing offsets
+                    print($"{replayed} Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
+                    uint diff = MostRecentKey() - (lastSeqNumber + 1);
+                    interGroupOffset = (int)diff;
+                    serverReplaySID = MostRecentKey(interGroupOffset);
+                    server_replayCmd = MostRecentCommand(interGroupOffset);
+                }
 
                 if (replayed_ticks > 0)
                 {
-                    print("Playback " + serverReplaySID.ToString() + $"({replayed_ticks})");
+                    print($"{replayed} Playback " + serverReplaySID.ToString() + $"({replayed_ticks})");
                     controller.ReplayingInputs(server_replayCmd);
                     replayed_ticks -= 1;
-                    replayed += 1;
                 }
-                /* Keene's notes for the future
-                * there existed a tiny bug here.
-                * earlier it was an if-else statement, but this would result in inconsistencies when updating vel/acceleration.
-                * this is due to the fact that there would be ticks occasionally skipped just to upload everything. Resulting in errors.
-                */
                 if (replayed_ticks == 0)
                 {
-                    //TODO the offsets thing is currently untested!
                     if (interGroupOffset == 0)
                     {
                         toReplay = false;
                         // Generate new endpoint to send back to client
                         TRS_Snapshot replySnap = CreateNewSnapshot();
                         lastSeqNumber = serverReplaySID; // To keep track of last replayed ID
-                        print("Reply " + serverReplaySID.ToString() + $"({replySnap.position})");
+                        print($"{replayed} Reply " + serverReplaySID.ToString() + $"({replySnap.position})");
                         RpcRecvPosition(lastSeqNumber, replySnap);
                         InputQueue.Dequeue();
                         FastIQKeys.Remove(serverReplaySID);
                     }
                     else
                     {
+                        toReplay = false;
+                        // Generate new endpoint to send back to client
                         TRS_Snapshot replySnap = CreateNewSnapshot(); // Create New Snapshot
-                        lastSeqNumber = MostRecentKey(interGroupOffset);
+                        lastSeqNumber = MostRecentKey(interGroupOffset); // Last Replayed ID
                         RpcRecvPosition(lastSeqNumber, replySnap);
+                        print($"{replayed} Reply S " + serverReplaySID.ToString() + $"({replySnap.position})");
                         // Don't remove from the input queue yet
                         interGroupOffset -= 1; // Go back by one step
+
                     }
-                    if (InputQueue.Count > 0 && interGroupOffset == 0 && lastSeqNumber + 1 != MostRecentKey(interGroupOffset))
-                    {
-                        // Handles doing offsets
-                        print($"Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
-                        uint diff = MostRecentKey() - lastSeqNumber + 1;
-                        interGroupOffset = (int)diff;
-                        serverReplaySID = MostRecentKey(interGroupOffset);
-                        server_replayCmd = MostRecentCommand(interGroupOffset);
-                    }
-                    else if (InputQueue.Count > 0 && interGroupOffset == 0 && serverReplaySID < lastSeqNumber)
+                    if (InputQueue.Count > 0 && serverReplaySID < lastSeqNumber)
                     {
                         // Eg. 91 < 93 then its out of order
                         server_replayCmd = MostRecentCommand();
@@ -359,8 +373,10 @@ namespace Mirror
                             RpcAckOutOfOrder(serverReplaySID);
                         }
 
+
                     }
                 }
+                replayed += 1;
             }
         }
         void BroadcastLocalInputs()
@@ -372,8 +388,11 @@ namespace Mirror
                 while (rcnt > 0)
                 {
                     InputGroup rcmd = currentCmds[rcnt - 1];
+
                     print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
                     CmdUpdateInputLists(rcmd, rcmd.Recent().seq); // Send this to the server
+
+
                     rcnt -= 1;
                 }
                 currentCmds.Clear();
@@ -417,8 +436,10 @@ namespace Mirror
                     {
                         SnapshotMap[currentCmd.seq] = sn;
                     }
+
                     print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
                     CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
+
                     deltaCmdCount = 0;
                     validCmd = false;
                 }
