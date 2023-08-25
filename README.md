@@ -7,7 +7,6 @@ An implementation of Client-Side Prediction done with Mirror. This project was j
 - Works with kinematic bodies and rigidbodies with physics (you have to tune this)
 # TODO
 - Make it easy to use for people who are not me
-- Make it so you can modulate send and receive rates between client and server (currently, you can only determine when the client sends)
 - Rename scripts to be cooler
 - Documentation
 - Bugs?
