@@ -11,6 +11,7 @@ An implementation of Client-Side Prediction done with Mirror. This project was j
 - Documentation
 - Bugs?
 # How to Use
+0. Grab everything in the "Keen's Things" folder and move into your project
 1. Drag the NetworkCCmd.cs script into your controller of choice
 2. Create a reference of the NetworkCCmd object in your MovementController script.
 3. Make a hasInput() function that checks if you are currently doing any button presses (including mouse movements).
