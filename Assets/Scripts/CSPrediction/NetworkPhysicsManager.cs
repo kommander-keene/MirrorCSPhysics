@@ -32,7 +32,7 @@ public class NetworkPhysicsManager : MonoBehaviour, INetworkRegistry
         if (instance == null)
         {
             instance = this;
-            Physics.simulationMode = SimulationMode.Script;
+            Physics.autoSimulation = false;
 
 
             main = SceneManager.CreateScene("MainScene");
@@ -64,17 +64,21 @@ public class NetworkPhysicsManager : MonoBehaviour, INetworkRegistry
     {
         if (physicsObjects.ContainsKey(id))
         {
+            print($"physics.Contains {id}");
             return false;
         }
         physicsObjects.Add(id, obj);
         setNetworkedPhysics(obj);
         return true;
     }
-    public GameObject RemoveNetworkedPhysicsObject(uint id)
+    public bool RemoveNetworkedPhysicsObject(uint id)
     {
-        GameObject obj;
-        physicsObjects.Remove(id, out obj);
-        return obj;
+        return physicsObjects.Remove(id);
+    }
+
+    public void ClearNetworkedPhysics()
+    {
+        physicsObjects.Clear();
     }
 
     #endregion
@@ -102,6 +106,10 @@ public class NetworkPhysicsManager : MonoBehaviour, INetworkRegistry
     public Dictionary<uint, GameObject> GetPhysicsObjects()
     {
         return physicsObjects;
+    }
+    public PhysicsScene NetPhysics()
+    {
+        return networkedPhysics;
     }
     #endregion
 }

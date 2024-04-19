@@ -82,8 +82,8 @@ public class Controller : NetworkBehaviour, IController
         {
             // driver.transform.localPosition += Vector3.right * .5f * Mathf.Sign(AD);
             driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
-            // this.transform.position += Vector3.right * 1.2f * (numberOfCommands <= 50 ? -1 : 1);
-            // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
+            // this.transform.position += Vector3.right * 0.5f * Mathf.Sign(AD);
+            // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(AD), driver.velocity, 0.9f);
         }
         if (J != 0 && MSPassed == 30)
         {

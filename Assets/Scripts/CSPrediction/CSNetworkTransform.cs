@@ -41,7 +41,7 @@ namespace Mirror
         CircularQueueWrapper PreviousInputQueue;
         Queue<InputGroup> InputQueue; // TODO Replace it with a FILO Queue.
         HashSet<uint> FastIQKeys;
-        public int redudancyCapacity;
+
         Dictionary<uint, TRS_Snapshot> SnapshotMap;
 
 
@@ -56,10 +56,11 @@ namespace Mirror
         [Range(1, 120)]
         const uint sendIntervalMultiplier = 1; // not implemented yet
 
-        [Header("Snapshot Interpolation")]
+        [Header("Client Side Interpolation")]
         public bool useMirrorInterpolation; // Only handles transforms and not rigidbodies
         // [Tooltip("Add a small timeline offset to account for decoupled arrival of NetworkTime and NetworkTransform snapshots.\nfixes: https://github.com/MirrorNetworking/Mirror/issues/3427")]
         // public bool timelineOffset = false;
+        public int redudancyCapacity;
         public int frameSmoothing;
         public bool predictRotation;
         public float broadcastInterval;
@@ -89,6 +90,7 @@ namespace Mirror
         public float errorMargin;
         public IController controller;
         public float correctionAmount = .1f;
+        public float correctionAmountVelocities = 1f;
         public int noInputUpdateRate = 3;
         public float instaSnapError = 1;
         private uint seqSendUpdate;
@@ -105,8 +107,6 @@ namespace Mirror
             }
         }
         Queue<DelayReply> DelayReplyQueue;
-        [Header("Debug")]
-        public GameObject CheckerSpawner;
 
 
         private void InitializeLists()
@@ -154,13 +154,13 @@ namespace Mirror
             {
                 deltaCmdCount += 1;
                 currentCmd.ticks = deltaCmdCount; // Continue counting up!
-                // print("Repeated Command");
+                // //print("Repeated Command");
                 emergencySnap = CreateNewSnapshot(); // Create snapshot after the move
             }
             else if (validCmd && !InputCmd.CmpActions(cmd, currentCmd))
             {
 
-                // print("Valid Prior");
+                // //print("Valid Prior");
                 // Add old command over
                 currentCmd.seq = seqSendUpdate++;
                 currentCmd.ticks = deltaCmdCount;
@@ -172,7 +172,7 @@ namespace Mirror
                 // 
                 if (!SnapshotMap.ContainsKey(seqNumber))
                 {
-                    // print($"Creating Snapshot At {emergencySnap.position}");
+                    // //print($"Creating Snapshot At {emergencySnap.position}");
                     SnapshotMap.Add(seqNumber, emergencySnap);
                     // Save the positions in my own lists
                     if (ReplayCommands.Count < numberCommands)
@@ -189,7 +189,7 @@ namespace Mirror
                 deltaCmdCount = 1;
                 cmd.ticks = 1;
                 currentCmd = cmd;
-                // print("Invalid Prior");
+                // //print("Invalid Prior");
                 validCmd = true; // The "list" is now populated with commands
                 emergencySnap = CreateNewSnapshot();
             }
@@ -324,7 +324,7 @@ namespace Mirror
                 {
                     serverReplaySID = MostRecentKey(interGroupOffset);
                     server_replayCmd = MostRecentCommand(interGroupOffset);
-                    print($"{replayed} Setting {serverReplaySID}");
+                    //print($"{replayed} Setting {serverReplaySID}");
                     // They are different so, it means we havent deducted from replayed ticks yet
                     replayed_ticks = server_replayCmd.ticks;
                     toReplay = true; // Set an id so this doesn't get hit twice
@@ -337,7 +337,7 @@ namespace Mirror
                 if (validSwitch && serverReplaySID != 0)
                 {
                     // I did not recieve a zero first tick
-                    print($"{replayed} Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
+                    //print($"{replayed} Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
                     interGroupOffset = (int)serverReplaySID;
                     serverReplaySID = MostRecentKey(interGroupOffset);
                     server_replayCmd = MostRecentCommand(interGroupOffset);
@@ -345,7 +345,7 @@ namespace Mirror
                 else if (!validSwitch && interGroupOffset == 0 && lastSeqNumber + 1 != serverReplaySID)
                 {
                     // Handles doing offsets
-                    print($"{replayed} Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
+                    //print($"{replayed} Offset: {lastSeqNumber + 1} is not {MostRecentKey()}");
                     uint diff = MostRecentKey() - (lastSeqNumber + 1);
                     interGroupOffset = (int)diff;
                     serverReplaySID = MostRecentKey(interGroupOffset);
@@ -354,9 +354,7 @@ namespace Mirror
 
                 if (replayed_ticks > 0)
                 {
-                    print($"{replayed} Playback PRE " + $"{server_replayCmd.axis3} ({target.transform.position})");
                     controller.ReplayingInputs(server_replayCmd);
-                    print($"{replayed} Playback POST" + $"{server_replayCmd.axis3} ({target.transform.position})");
                     replayed_ticks -= 1;
                 }
                 if (replayed_ticks == 0)
@@ -367,7 +365,7 @@ namespace Mirror
                         // Generate new endpoint to send back to client
                         TRS_Snapshot replySnap = CreateNewSnapshot();
                         lastSeqNumber = serverReplaySID; // To keep track of last replayed ID
-                        print($"{replayed} Reply " + serverReplaySID.ToString() + $"({replySnap.position})");
+                        //print($"{replayed} Reply " + serverReplaySID.ToString() + $"({replySnap.position})");
                         DelayReplyEnq(lastSeqNumber, replySnap);
                         InputQueue.Dequeue();
                         FastIQKeys.Remove(serverReplaySID);
@@ -379,7 +377,7 @@ namespace Mirror
                         TRS_Snapshot replySnap = CreateNewSnapshot(); // Create New Snapshot
                         lastSeqNumber = MostRecentKey(interGroupOffset); // Last Replayed ID
                         DelayReplyEnq(lastSeqNumber, replySnap);
-                        print($"{replayed} Reply S " + serverReplaySID.ToString() + $"({replySnap.position})");
+                        //print($"{replayed} Reply S " + serverReplaySID.ToString() + $"({replySnap.position})");
                         // Don't remove from the input queue yet
                         interGroupOffset -= 1; // Go back by one step
 
@@ -390,7 +388,7 @@ namespace Mirror
                         server_replayCmd = MostRecentCommand();
                         serverReplaySID = MostRecentKey();
 
-                        print($"Out of Order: {serverReplaySID} < {lastSeqNumber}");
+                        //print($"Out of Order: {serverReplaySID} < {lastSeqNumber}");
                         bool outOfOrder = serverReplaySID < lastSeqNumber;
                         while (InputQueue.Count > 0 && outOfOrder)
                         {
@@ -418,7 +416,7 @@ namespace Mirror
                 {
                     InputGroup rcmd = currentCmds[rcnt - 1];
 
-                    print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
+                    //print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
                     CmdUpdateInputLists(rcmd, rcmd.Recent().seq); // Send this to the server
 
 
@@ -462,7 +460,7 @@ namespace Mirror
                         SnapshotMap.Add(currentCmd.seq, sn);
                     }
 
-                    print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
+                    //print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
                     CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
 
                     deltaCmdCount = 0;
@@ -563,8 +561,6 @@ namespace Mirror
                         transform.localRotation = finalRot;
                         trv.angularVelocity = finalAVB;
                     }
-
-                    Instantiate(CheckerSpawner, finalPosition, finalRot);
                 }
                 else
                 {
@@ -585,14 +581,14 @@ namespace Mirror
                     {
                         error = finalPosition - this.transform.localPosition;
                         this.transform.localPosition = Vector3.Lerp(this.transform.localPosition, this.transform.localPosition + error, correctionAmount);
-                        target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(target.GetComponent<Rigidbody>().velocity, finalVel, 1);
+                        target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(target.GetComponent<Rigidbody>().velocity, finalVel, correctionAmountVelocities);
 
 
                         if (predictRotation)
                         {
                             errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
                             this.transform.localRotation = Quaternion.Lerp(this.transform.localRotation, this.transform.localRotation * errorR, correctionAmount);
-                            trv.angularVelocity = Vector3.Lerp(trv.angularVelocity, finalAVB, 1);
+                            trv.angularVelocity = Vector3.Lerp(trv.angularVelocity, finalAVB, correctionAmountVelocities);
                         }
                         frames -= 1;
                         yield return new WaitForFixedUpdate();
@@ -632,13 +628,13 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
-                    print("Recieved " + id.ToString()
-                    + $"[{serverSnap.position} vs {localSnap.position}]");
+                    // //print("Recieved " + id.ToString()
+                    // + $"[{serverSnap.position} vs {localSnap.position}]");
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else
                 {
-                    print("Recieved " + id.ToString());
+                    // //print("Recieved " + id.ToString());
                     ReplayCommands.Clear();
                 }
 
@@ -648,8 +644,8 @@ namespace Mirror
             }
             else if (SnapshotMap.Count > 0)
             {
-                print("Recieved " + id.ToString()
-            + $"!![{serverSnap.position}] NOT FOUND IN SNAPMAP");
+                //     //print("Recieved " + id.ToString()
+                // + $"!![{serverSnap.position}] NOT FOUND IN SNAPMAP");
                 // Automatically perform corrections
                 DoPositionErrorCorrect(id, serverSnap);
             }
@@ -871,6 +867,7 @@ CmdClientToServerSync(
                 //Add a new object that is exclusively physics simulated
                 uint netID = target.GetComponent<NetworkIdentity>().netId;
                 bool success = NetworkPhysicsManager.instance.RegisterNetworkPhysicsObject(netID, this.gameObject, true);
+                // print($"PHYS: Reg player with netID {netID} {success}");
                 Debug.Assert(success);
             }
             //Add only myself, since we don't really care where the others are, we are not resimulating them.

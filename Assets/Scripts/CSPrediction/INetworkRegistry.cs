@@ -6,5 +6,5 @@ public interface INetworkRegistry
     // Register Networked Physics Object into the system
     public bool RegisterNetworkPhysicsObject(uint id, GameObject obj, bool localHost);
     // Remove Networked Physics Object from the system
-    public GameObject RemoveNetworkedPhysicsObject(uint id);
+    public bool RemoveNetworkedPhysicsObject(uint id);
 }
