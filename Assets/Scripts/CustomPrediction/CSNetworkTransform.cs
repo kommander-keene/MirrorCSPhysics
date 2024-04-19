@@ -38,11 +38,11 @@ namespace Mirror
         protected bool hasSentUnchangedPosition;
         public const int MAX_INPUT_QUEUE = 1024;
 
-        CircularQueueWrapper PreviousInputQueue;
-        Queue<InputGroup> InputQueue; // TODO Replace it with a FILO Queue.
-        HashSet<uint> FastIQKeys;
+        CircularQueueWrapper PreviousInputQueue; // Client-side queue used to send inputs
+        Queue<InputGroup> InputQueue; // Server-side used to replay inputs
+        HashSet<uint> FastIQKeys; // Server-side Hash-set used to prevent Server from recieving repeats of inputs
 
-        Dictionary<uint, TRS_Snapshot> SnapshotMap;
+        Dictionary<uint, TRS_Snapshot> SnapshotMap; // For referring to snapshots that you recieved replies from.
 
 
         #endregion
@@ -107,8 +107,15 @@ namespace Mirror
             }
         }
         Queue<DelayReply> DelayReplyQueue;
-
-
+        /// <summary>
+        /// Determines of rigidbody physics are being changed. If not cut sends to save bandwidth.
+        /// </summary>
+        /// <returns></returns>
+        public bool DeltaPhysicsChange()
+        {
+            // TODO
+            return false;
+        }
         private void InitializeLists()
         {
             currentCmds = new List<InputGroup>();
@@ -206,6 +213,7 @@ namespace Mirror
             {
                 while (DelayReplyQueue.Count > 0)
                 {
+                    // TODO - Adjust this so that commands are sent back via SyncVar
                     DelayReply reply = DelayReplyQueue.Dequeue();
                     RpcRecvPosition(reply.mappingID, reply.snapshot);
                 }
@@ -279,7 +287,7 @@ namespace Mirror
             else if (isServer && !isLocalPlayer) // if I am the local player, then I shouldn't be receiving or redoing any commands
             {
                 //RECIEVE (SERVER)
-                RecieveRemoteCommands();
+                RecieveRemoteCommands(); // Recieves client commands and replays actions on server.
                 DelayReplyChecker();
             }
         }
@@ -611,6 +619,7 @@ namespace Mirror
         [ClientRpc]
         void RpcRecvPosition(uint id, TRS_Snapshot serverSnap)
         {
+            // Client recieving reply back from server
             if (!isLocalPlayer || isServer) return;
             TRS_Snapshot localSnap;
 
