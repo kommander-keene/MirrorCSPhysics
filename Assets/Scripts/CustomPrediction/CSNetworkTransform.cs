@@ -5,12 +5,10 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using System;
-using System.Globalization;
-using System.Data;
 
 namespace Mirror
 {
-    [AddComponentMenu("Network/Network Command Transform")]
+    [AddComponentMenu("Network/Predictive Network Transform")]
     public class CSNetworkTransform : NetworkTransformBase
     {
         // only sync when changed hack /////////////////////////////////////////
@@ -38,16 +36,18 @@ namespace Mirror
         protected bool hasSentUnchangedPosition;
         public const int MAX_INPUT_QUEUE = 1024;
 
-        CircularQueueWrapper PreviousInputQueue; // Client-side queue used to send inputs
-        Queue<InputGroup> InputQueue; // Server-side used to replay inputs
-        HashSet<uint> FastIQKeys; // Server-side Hash-set used to prevent Server from recieving repeats of inputs
-
-        Dictionary<uint, TRS_Snapshot> SnapshotMap; // For referring to snapshots that you recieved replies from.
+        CircularQueueWrapper PreviousInputQueue;
+        Queue<InputGroup> InputQueue; // TODO Replace it with a FILO Queue.
+        HashSet<uint> FastIQKeys;
+        /// <summary>
+        /// 
+        /// </summary>
+        Dictionary<uint, TRS_Snapshot> SnapshotMap;
 
 
         #endregion
 #endif
-        public GameObject MirrorPrefab;
+        public GameObject DebugCube;
         double lastClientSendTime;
         public double lastServerSendTime;
 
@@ -80,18 +80,32 @@ namespace Mirror
         // Even if I assume we had 2 snapshots to begin with to start interpolating (which we don't), by the time we reach 13th frame, we are out of snapshots, and have to wait 7 frames for next snapshot to come. This is the reason why we absolutely need the timestamp adjustment. We are starting way too early to interpolate. 
 
         InputCmd currentCmd;
-        SlightlyModifiedNetworkRigidbody smnr;
         bool validCmd = false;
         List<InputGroup> currentCmds;
         int numberCommands = 100;
         List<InputCmd> ReplayCommands;
         int deltaCmdCount;
         int cmdCount = 0;
+        /// <summary>
+        /// Error margin until I start caring about fixing updates
+        /// </summary>
         public float errorMargin;
         public IController controller;
+        /// <summary>
+        /// Correction amount per tick (combine with smoothing!)
+        /// </summary>
         public float correctionAmount = .1f;
+        /// <summary>
+        /// Correction amount per tick for velocities
+        /// </summary>
         public float correctionAmountVelocities = 1f;
+        /// <summary>
+        /// Rate of sending ticks when player is static
+        /// </summary>
         public int noInputUpdateRate = 3;
+        /// <summary>
+        /// How bad does the error have to be before a forceful correction
+        /// </summary>
         public float instaSnapError = 1;
         private uint seqSendUpdate;
         private bool down;
@@ -107,15 +121,8 @@ namespace Mirror
             }
         }
         Queue<DelayReply> DelayReplyQueue;
-        /// <summary>
-        /// Determines of rigidbody physics are being changed. If not cut sends to save bandwidth.
-        /// </summary>
-        /// <returns></returns>
-        public bool DeltaPhysicsChange()
-        {
-            // TODO
-            return false;
-        }
+
+
         private void InitializeLists()
         {
             currentCmds = new List<InputGroup>();
@@ -125,8 +132,6 @@ namespace Mirror
             FastIQKeys = new();
             PreviousInputQueue = new CircularQueueWrapper(redudancyCapacity);
             DelayReplyQueue = new Queue<DelayReply>();
-            smnr = GetComponent<SlightlyModifiedNetworkRigidbody>();
-            smnr.IgnoreSync = isLocalPlayer;
         }
         void Awake()
         {
@@ -213,7 +218,6 @@ namespace Mirror
             {
                 while (DelayReplyQueue.Count > 0)
                 {
-                    // TODO - Adjust this so that commands are sent back via SyncVar
                     DelayReply reply = DelayReplyQueue.Dequeue();
                     RpcRecvPosition(reply.mappingID, reply.snapshot);
                 }
@@ -287,7 +291,7 @@ namespace Mirror
             else if (isServer && !isLocalPlayer) // if I am the local player, then I shouldn't be receiving or redoing any commands
             {
                 //RECIEVE (SERVER)
-                RecieveRemoteCommands(); // Recieves client commands and replays actions on server.
+                RecieveRemoteCommands();
                 DelayReplyChecker();
             }
         }
@@ -311,6 +315,7 @@ namespace Mirror
         }
         uint MostRecentKey(int i)
         {
+            // periodic error where I try to get the the wrong index??
             return InputQueue.Peek().Get(i).seq;
         }
         InputCmd MostRecentCommand(int i)
@@ -492,6 +497,8 @@ namespace Mirror
             }
         }
         #region Networked Physics
+
+        double rewindID;
         /// <summary>
         /// Does the rewinding. Note that values above 10ish start to be really slow to correct
         /// </summary>
@@ -507,104 +514,185 @@ namespace Mirror
             */
             if (ReplayCommands.Count == 0)
             {
-                // Oopsies nothing to replay haha
-                yield return null;
+                // Either nothing to replay
+                // or recieved ID has already be thrown away (old)
+                yield break;
             }
+            // Before times
+            var trv = target.GetComponent<Rigidbody>();
+            Vector3 before = this.transform.localPosition;
+            Vector3 beforeV = trv.velocity;
+            Quaternion beforeR = transform.localRotation;
+            Vector3 beforeAV = trv.angularVelocity;
 
-            else
+            if (predictRotation)
             {
-                // Before times
-                var trv = target.GetComponent<Rigidbody>();
-                Vector3 before = this.transform.localPosition;
-                Vector3 beforeV = trv.velocity;
-                Quaternion beforeR = transform.localRotation;
-                Vector3 beforeAV = trv.angularVelocity;
+                beforeR = transform.localRotation;
+                beforeAV = trv.angularVelocity;
+            }
+            // Set to the start
 
-                if (predictRotation)
+            this.transform.localPosition = lastValid.position;
+            trv.velocity = lastValid.velocity;
+            if (predictRotation)
+            {
+                trv.angularVelocity = lastValid.angVel;
+                this.transform.localRotation = lastValid.rotation;
+            }
+            string elements = "";
+            foreach (InputCmd command in ReplayCommands)
+            {
+                elements += command.seq + ", ";
+            }
+            print($"Start at {id} vs {rewindID}, buffer contains [{elements}]");
+
+            // If ReplayCommand is one no need to replay because that's just the base command
+            if (ReplayCommands.Count - 1 > 1)
+            {
+                int toRemove = int.MinValue;
+                // In the event I recieve state t1 before t0, 
+                // Resimulate from t1, and then remove it alongside everything prior.
+                for (int i = 0; i < ReplayCommands.Count; i++)
                 {
-                    beforeR = transform.localRotation;
-                    beforeAV = trv.angularVelocity;
+                    if (ReplayCommands[i].seq == id)
+                    {
+                        toRemove = i;
+                        break;
+                    }
                 }
-                // Set to the start
-
-                this.transform.localPosition = lastValid.position;
-                trv.velocity = lastValid.velocity;
-                if (predictRotation)
-                {
-                    trv.angularVelocity = lastValid.angVel;
-                    this.transform.localRotation = lastValid.rotation;
-                }
-
-                NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
-
                 NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
-                int iteration = ReplayCommands.Count - 1;
-                while (iteration >= 0)
+                print("ISPAUSED: " + manager.IsNetworkSimulationPaused());
+                NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
+                int iteration = toRemove + 1;
+                if (toRemove < 0)
                 {
-                    InputCmd recent = ReplayCommands[iteration]; // Fetch the most recent ReplayCommand
-                    uint pvKey = recent.seq;
+                    yield break; // no point in processing this element
+                }
+                while (iteration >= 0 && iteration < ReplayCommands.Count)
+                {
+                    // Replay all commands that have not been verified by the server
+                    InputCmd recent = ReplayCommands[iteration];
                     controller.ReplayingInputs(recent);
                     // Simulate it forwards by a delta time
                     manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
-                    // Update my shit
-                    // var sn = CreateNewSnapshot();
-                    // SnapshotMap[pvKey] = sn;
-                    iteration -= 1;
+                    if (SnapshotMap.ContainsKey(recent.seq))
+                    {
+                        // replace that element with the udpated version
+                        TRS_Snapshot replacement = new();
+                        // zeroeth-order
+                        replacement.position = target.transform.localPosition;
+                        replacement.rotation = target.transform.localRotation;
+                        // first-order
+                        replacement.velocity = trv.velocity;
+                        replacement.angVel = trv.angularVelocity;
+                        SnapshotMap[recent.seq] = replacement;
+                    }
+
+
+                    iteration += 1;
                 }
-                ReplayCommands.Clear();
                 NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
 
-                Vector3 finalPosition = this.transform.localPosition;
-                Vector3 finalVel = trv.velocity;
-
-                Vector3 finalAVB = trv.angularVelocity;
-                Quaternion finalRot = transform.localRotation;
-
-                if ((before - finalPosition).magnitude > instaSnapError)
+                if (toRemove == ReplayCommands.Count - 1)
                 {
-                    this.transform.localPosition = finalPosition;
-                    target.GetComponent<Rigidbody>().velocity = finalVel;
-                    if (predictRotation)
-                    {
-                        transform.localRotation = finalRot;
-                        trv.angularVelocity = finalAVB;
-                    }
+                    print("CLEARED!");
+                    ReplayCommands.Clear();
+                    toRemove = -1;
                 }
-                else
+                for (int i = 0; i <= toRemove; i++)
                 {
-                    // Afix this position to before!
-                    this.transform.localPosition = before;
-                    trv.velocity = beforeV;
-                    if (predictRotation)
-                    {
-                        this.transform.localRotation = beforeR;
-                        trv.angularVelocity = beforeAV;
-                    }
-
-                    Vector3 error;
-                    Quaternion errorR;
-                    int frames = frame_num;
-
-                    while (frames > 0)
-                    {
-                        error = finalPosition - this.transform.localPosition;
-                        this.transform.localPosition = Vector3.Lerp(this.transform.localPosition, this.transform.localPosition + error, correctionAmount);
-                        target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(target.GetComponent<Rigidbody>().velocity, finalVel, correctionAmountVelocities);
-
-
-                        if (predictRotation)
-                        {
-                            errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
-                            this.transform.localRotation = Quaternion.Lerp(this.transform.localRotation, this.transform.localRotation * errorR, correctionAmount);
-                            trv.angularVelocity = Vector3.Lerp(trv.angularVelocity, finalAVB, correctionAmountVelocities);
-                        }
-                        frames -= 1;
-                        yield return new WaitForFixedUpdate();
-                    }
+                    print("REMOVING: " + ReplayCommands[i].seq);
+                    if (ReplayCommands.Count > 0)
+                        ReplayCommands.RemoveAt(0); // remove starting from the front
                 }
 
             }
+            else
+            {
+                elements = "";
+                foreach (InputCmd command in ReplayCommands)
+                {
+                    elements += command.seq + ", ";
+                }
+                print($"NO SIM at {id} vs {rewindID}, buffer contains [{elements}]");
+                // Just empty the commands list
+                ReplayCommands.Clear();
+            }
 
+            Vector3 finalPosition = this.transform.localPosition;
+            Vector3 finalVel = trv.velocity;
+
+            Vector3 finalAVB = trv.angularVelocity;
+            Quaternion finalRot = transform.localRotation;
+            // GameObject destroy2 = Instantiate(DebugCube, lastValid.position, this.transform.rotation);
+            // destroy2.GetComponent<MeshRenderer>().material.color = new Color(1, 0, 0, 0.2f);
+            // Destroy(destroy2, .1f);
+
+            // destroy2 = Instantiate(DebugCube, finalPosition, finalRot);
+            // destroy2.GetComponent<MeshRenderer>().material.color = new Color(0, 1, 0, 0.2f);
+            // Destroy(destroy2, .1f);
+            if (rewindID > id)
+            {
+                yield break;
+            }
+            rewindID = rewindID < id ? id : rewindID; // store latest processing frame
+            if ((before - finalPosition).magnitude > instaSnapError)
+            {
+                this.transform.localPosition = finalPosition;
+                target.GetComponent<Rigidbody>().velocity = finalVel;
+                if (predictRotation)
+                {
+                    transform.localRotation = finalRot;
+                    trv.angularVelocity = finalAVB;
+                }
+            }
+            else
+            {
+                // Afix this position to before!
+                this.transform.localPosition = before;
+                trv.velocity = beforeV;
+                if (predictRotation)
+                {
+                    this.transform.localRotation = beforeR;
+                    trv.angularVelocity = beforeAV;
+                }
+
+                Vector3 error;
+                Quaternion errorR;
+                int frames = frame_num;
+                while (frames > 0)
+                {
+                    if (rewindID > id)
+                    {
+                        yield break;
+                    }
+                    yield return new WaitForEndOfFrame();
+                    error = finalPosition - this.transform.localPosition;
+
+                    this.transform.localPosition = Vector3.Lerp(
+                        this.transform.localPosition,
+                        this.transform.localPosition + error,
+                        correctionAmount);
+
+                    target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(
+                        target.GetComponent<Rigidbody>().velocity,
+                        finalVel,
+                        correctionAmountVelocities);
+                    if (predictRotation)
+                    {
+                        errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
+                        this.transform.localRotation = Quaternion.Slerp(
+                            this.transform.localRotation,
+                            this.transform.localRotation * errorR,
+                            correctionAmount);
+                        trv.angularVelocity = Vector3.Lerp(
+                            trv.angularVelocity,
+                            finalAVB,
+                            correctionAmountVelocities);
+                    }
+                    frames -= 1;
+                }
+            }
         }
         #endregion
         void DoPositionErrorCorrect(double a, TRS_Snapshot snap)
@@ -619,7 +707,6 @@ namespace Mirror
         [ClientRpc]
         void RpcRecvPosition(uint id, TRS_Snapshot serverSnap)
         {
-            // Client recieving reply back from server
             if (!isLocalPlayer || isServer) return;
             TRS_Snapshot localSnap;
 
@@ -637,14 +724,25 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
-                    // //print("Recieved " + id.ToString()
-                    // + $"[{serverSnap.position} vs {localSnap.position}]");
+                    print($"Recieved {rewindID} " + id.ToString() + $" {mgerror}");
+
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else
                 {
-                    // //print("Recieved " + id.ToString());
-                    ReplayCommands.Clear();
+                    //print("Recieved " + id.ToString());
+                    // If no errors, means this localSnapshot is okay
+                    // Remove this one localSnapshot
+                    int target = -1;
+                    for (int i = 0; i < ReplayCommands.Count; i++)
+                    {
+                        if (ReplayCommands[i].seq == id)
+                        {
+                            target = i;
+                            break;
+                        }
+                    }
+                    ReplayCommands.RemoveAt(target);
                 }
 
 

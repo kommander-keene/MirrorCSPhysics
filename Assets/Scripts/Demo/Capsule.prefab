@@ -16,7 +16,6 @@ GameObject:
   - component: {fileID: 5109106629795551829}
   - component: {fileID: 5109106629795551828}
   - component: {fileID: 1858334946555492435}
-  - component: {fileID: -7875665576442138167}
   m_Layer: 0
   m_Name: Capsule
   m_TagString: Untagged
@@ -97,17 +96,8 @@ CapsuleCollider:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5109106629795551823}
   m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
   m_IsTrigger: 0
-  m_ProvidesContacts: 0
   m_Enabled: 1
-  serializedVersion: 2
   m_Radius: 0.5
   m_Height: 1
   m_Direction: 1
@@ -119,25 +109,14 @@ Rigidbody:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5109106629795551823}
-  serializedVersion: 4
-  m_Mass: 100
+  serializedVersion: 2
+  m_Mass: 2
   m_Drag: 0
   m_AngularDrag: 0
-  m_CenterOfMass: {x: 0, y: 0, z: 0}
-  m_InertiaTensor: {x: 1, y: 1, z: 1}
-  m_InertiaRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ImplicitCom: 1
-  m_ImplicitTensor: 1
-  m_UseGravity: 1
+  m_UseGravity: 0
   m_IsKinematic: 0
   m_Interpolate: 0
-  m_Constraints: 0
+  m_Constraints: 112
   m_CollisionDetection: 0
 --- !u!114 &5109106629795551829
 MonoBehaviour:
@@ -154,9 +133,10 @@ MonoBehaviour:
   syncDirection: 0
   syncMode: 0
   syncInterval: 0
+  determinism: 0
   cubePrefab: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
   name: {fileID: 0}
-  speed: 1
+  speed: 25
 --- !u!114 &5109106629795551828
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -196,51 +176,27 @@ MonoBehaviour:
   syncScale: 0
   interpolatePosition: 1
   interpolateRotation: 1
-  interpolateScale: 1
+  interpolateScale: 0
   showGizmos: 0
   showOverlay: 0
   overlayColor: {r: 0, g: 0, b: 0, a: 0.5}
-  onlySyncOnChange: 1
+  onlySyncOnChange: 0
   bufferResetMultiplier: 5
   positionSensitivity: 0.01
   rotationSensitivity: 0.01
   scaleSensitivity: 0.01
-  redudancyCapacity: 4
-  MirrorPrefab: {fileID: 0}
+  DebugCube: {fileID: 5109106629795551823, guid: fc2299f002f866346987aa1a802b3ba4, type: 3}
   lastServerSendTime: 0
   useMirrorInterpolation: 0
-  frameSmoothing: 2
+  redudancyCapacity: 4
+  frameSmoothing: 3
   predictRotation: 0
   broadcastInterval: 0.016666668
   replyInterval: 0.033333335
   errorMargin: 0.001
-  correctionAmount: 0.1
-  noInputUpdateRate: 3
-  instaSnapError: 1
-  CheckerSpawner: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
+  correctionAmount: 0.2
+  correctionAmountVelocities: 0.2
+  noInputUpdateRate: 1
+  instaSnapError: 3
   timeStampAdjustment: 0
   offset: 0
---- !u!114 &-7875665576442138167
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5109106629795551823}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: d82453a6b37a96f47872a33b05eaa121, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  syncDirection: 0
-  syncMode: 0
-  syncInterval: 0
-  target: {fileID: 5109106629795551822}
-  clientAuthority: 0
-  syncVelocity: 0
-  clearVelocity: 0
-  velocitySensitivity: 0.1
-  syncAngularVelocity: 0
-  clearAngularVelocity: 0
-  angularVelocitySensitivity: 0.1
-  IgnoreSync: 0

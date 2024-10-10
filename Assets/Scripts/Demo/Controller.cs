@@ -10,6 +10,7 @@ public class Controller : NetworkBehaviour, IController
 {
 
     Rigidbody driver;
+    public bool determinism;
     public GameObject cubePrefab;
     public GameObject name;
     private CSNetworkTransform netCmdMg;
@@ -43,7 +44,7 @@ public class Controller : NetworkBehaviour, IController
         {
             float AD = Input.GetAxis("Horizontal") == 0 ? 0 : Mathf.Sign(Input.GetAxis("Horizontal"));
             float WS = Input.GetAxis("Vertical") == 0 ? 0 : Mathf.Sign(Input.GetAxis("Vertical"));
-            float J = Input.GetAxis("Jump");
+            float J = Input.GetAxisRaw("Jump");
             InputCmd cmd = new InputCmd();
             cmd.axis1 = AD;
             cmd.axis2 = WS;
@@ -70,9 +71,17 @@ public class Controller : NetworkBehaviour, IController
     {
         if (WS != 0)
         {
-            driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
-            // driver.velocity = Vector3.Lerp(-driver.transform.up * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
-            // driver.transform.localPosition += Vector3.forward * .5f * Mathf.Sign(WS);
+            if (!determinism)
+            {
+                // driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
+                driver.velocity = Vector3.Lerp(-driver.transform.up * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
+            }
+            else
+            {
+                driver.transform.localPosition += Vector3.forward * .5f * Mathf.Sign(WS);
+            }
+
+
             // StartCoroutine(balls());
             // pressed = false;
             // driver.transform.localPosition = Vector3.zero;
@@ -80,24 +89,25 @@ public class Controller : NetworkBehaviour, IController
 
         if (AD != 0)
         {
-            // driver.transform.localPosition += Vector3.right * .5f * Mathf.Sign(AD);
-            driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
-            // this.transform.position += Vector3.right * 0.5f * Mathf.Sign(AD);
-            // driver.velocity = Vector3.Lerp(-driver.transform.right * speed * Mathf.Sign(AD), driver.velocity, 0.9f);
+            if (!determinism)
+            {
+                // driver.transform.localPosition += Vector3.right * .5f * Mathf.Sign(AD);
+                driver.velocity = Vector3.Lerp(driver.transform.right * speed * Mathf.Sign(AD), driver.velocity, 0.9f);
+                // driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
+            }
+            else
+            {
+                this.transform.position += Vector3.right * 0.5f * Mathf.Sign(AD);
+            }
+
+
         }
-        if (J != 0 && MSPassed == 30)
+        if (J != 0)
         {
             // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
-            driver.position += Vector3.up * 10f;
-            MSPassed = 0;
-            StartCoroutine(Timer());
+            if (isLocalPlayer)
+                driver.position += Vector3.right * UnityEngine.Random.Range(2f, 3f); // purposefully cause non-determinism
         }
-        // if (WS != 0 || AD != 0)
-        // {
-        //     // Instantiate(cubePrefab, this.transform.position, Quaternion.identity);
-        //     name.name = $"Cubes Spawned = {time_run + 1}";
-        // }
-        // time_run = (WS != 0 || AD != 0) ? time_run + 1 : time_run;
 
     }
     #endregion

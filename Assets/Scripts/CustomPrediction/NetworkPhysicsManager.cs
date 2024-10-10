@@ -103,6 +103,10 @@ public class NetworkPhysicsManager : MonoBehaviour, INetworkRegistry
     {
         simulateNetwork = on;
     }
+    public bool IsNetworkSimulationPaused()
+    {
+        return !simulateNetwork;
+    }
     public Dictionary<uint, GameObject> GetPhysicsObjects()
     {
         return physicsObjects;
