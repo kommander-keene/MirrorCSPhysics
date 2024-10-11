@@ -431,8 +431,6 @@ namespace Mirror
 
                     //print("Sent Intermediate: " + rcmd.Recent().seq + $"({rcmd.Recent().ticks}) Rec: " + SnapshotMap[rcmd.Recent().seq].position);
                     CmdUpdateInputLists(rcmd, rcmd.Recent().seq); // Send this to the server
-
-
                     rcnt -= 1;
                 }
                 currentCmds.Clear();
@@ -547,77 +545,66 @@ namespace Mirror
             print($"Start at {id} vs {rewindID}, buffer contains [{elements}]");
 
             // If ReplayCommand is one no need to replay because that's just the base command
-            if (ReplayCommands.Count - 1 > 1)
+            int toRemove = int.MinValue;
+            // In the event I recieve state t1 before t0, 
+            // Resimulate from t1, and then remove it alongside everything prior.
+            for (int i = 0; i < ReplayCommands.Count; i++)
             {
-                int toRemove = int.MinValue;
-                // In the event I recieve state t1 before t0, 
-                // Resimulate from t1, and then remove it alongside everything prior.
-                for (int i = 0; i < ReplayCommands.Count; i++)
+                if (ReplayCommands[i].seq == id)
                 {
-                    if (ReplayCommands[i].seq == id)
-                    {
-                        toRemove = i;
-                        break;
-                    }
+                    toRemove = i;
+                    break;
                 }
-                NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
-                print("ISPAUSED: " + manager.IsNetworkSimulationPaused());
-                NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
-                int iteration = toRemove + 1;
-                if (toRemove < 0)
-                {
-                    yield break; // no point in processing this element
-                }
-                while (iteration >= 0 && iteration < ReplayCommands.Count)
-                {
-                    // Replay all commands that have not been verified by the server
-                    InputCmd recent = ReplayCommands[iteration];
-                    controller.ReplayingInputs(recent);
-                    // Simulate it forwards by a delta time
-                    manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
-                    if (SnapshotMap.ContainsKey(recent.seq))
-                    {
-                        // replace that element with the udpated version
-                        TRS_Snapshot replacement = new();
-                        // zeroeth-order
-                        replacement.position = target.transform.localPosition;
-                        replacement.rotation = target.transform.localRotation;
-                        // first-order
-                        replacement.velocity = trv.velocity;
-                        replacement.angVel = trv.angularVelocity;
-                        SnapshotMap[recent.seq] = replacement;
-                    }
-
-
-                    iteration += 1;
-                }
-                NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
-
-                if (toRemove == ReplayCommands.Count - 1)
-                {
-                    print("CLEARED!");
-                    ReplayCommands.Clear();
-                    toRemove = -1;
-                }
-                for (int i = 0; i <= toRemove; i++)
-                {
-                    print("REMOVING: " + ReplayCommands[i].seq);
-                    if (ReplayCommands.Count > 0)
-                        ReplayCommands.RemoveAt(0); // remove starting from the front
-                }
-
             }
-            else
+            NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
+            print("ISPAUSED: " + manager.IsNetworkSimulationPaused());
+            NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
+            int iteration = toRemove;
+            if (toRemove < 0)
             {
-                elements = "";
-                foreach (InputCmd command in ReplayCommands)
+                yield break; // no point in processing this element
+            }
+
+            while (iteration >= 0 && iteration < ReplayCommands.Count)
+            {
+                // Replay all commands that have not been verified by the server
+                InputCmd recent = ReplayCommands[iteration];
+                controller.ReplayingInputs(recent);
+                // Simulate it forwards by a delta time
+                manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
+                // GameObject destroy2 = Instantiate(DebugCube, this.transform.localPosition, this.transform.rotation);
+                // destroy2.GetComponent<MeshRenderer>().material.color = new Color(1, 0, 0, (iteration + 0.1f) / ReplayCommands.Count);
+                // Destroy(destroy2, .5f);
+                if (SnapshotMap.ContainsKey(recent.seq))
                 {
-                    elements += command.seq + ", ";
+                    // replace that element with the udpated version
+                    TRS_Snapshot replacement = new();
+                    // zeroeth-order
+                    replacement.position = target.transform.localPosition;
+                    replacement.rotation = target.transform.localRotation;
+                    // first-order
+                    replacement.velocity = trv.velocity;
+                    replacement.angVel = trv.angularVelocity;
+                    SnapshotMap[recent.seq] = replacement;
                 }
-                print($"NO SIM at {id} vs {rewindID}, buffer contains [{elements}]");
-                // Just empty the commands list
+
+
+                iteration += 1;
+            }
+            NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
+
+            if (toRemove == ReplayCommands.Count - 1)
+            {
                 ReplayCommands.Clear();
+                toRemove = -1;
             }
+            for (int i = 0; i <= toRemove; i++)
+            {
+                if (ReplayCommands.Count > 0)
+                    ReplayCommands.RemoveAt(0); // remove starting from the front
+            }
+            rewindID = rewindID < id ? id : rewindID; // store latest processing frame
+
 
             Vector3 finalPosition = this.transform.localPosition;
             Vector3 finalVel = trv.velocity;
@@ -635,7 +622,7 @@ namespace Mirror
             {
                 yield break;
             }
-            rewindID = rewindID < id ? id : rewindID; // store latest processing frame
+            print("POST CORRECTION ERROR: " + (before - finalPosition).magnitude);
             if ((before - finalPosition).magnitude > instaSnapError)
             {
                 this.transform.localPosition = finalPosition;
@@ -724,8 +711,7 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
-                    print($"Recieved {rewindID} " + id.ToString() + $" {mgerror}");
-
+                    print($"Recieved latest: {rewindID} id: " + id.ToString() + $" {mgerror}");
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else
@@ -742,6 +728,7 @@ namespace Mirror
                             break;
                         }
                     }
+                    rewindID = rewindID < id ? id : rewindID;
                     ReplayCommands.RemoveAt(target);
                 }
 

@@ -191,12 +191,12 @@ MonoBehaviour:
   redudancyCapacity: 4
   frameSmoothing: 3
   predictRotation: 0
-  broadcastInterval: 0.016666668
+  broadcastInterval: 0.033333335
   replyInterval: 0.033333335
   errorMargin: 0.001
   correctionAmount: 0.2
-  correctionAmountVelocities: 0.2
-  noInputUpdateRate: 1
-  instaSnapError: 3
+  correctionAmountVelocities: 0.02
+  noInputUpdateRate: 0
+  instaSnapError: 100
   timeStampAdjustment: 0
   offset: 0
