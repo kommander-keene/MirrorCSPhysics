@@ -39,46 +39,24 @@ namespace Mirror
         CircularQueueWrapper PreviousInputQueue;
         Queue<InputGroup> InputQueue; // TODO Replace it with a FILO Queue.
         HashSet<uint> FastIQKeys;
-        /// <summary>
-        /// 
-        /// </summary>
+        HashSet<uint> KeysToDelete;
         Dictionary<uint, TRS_Snapshot> SnapshotMap;
+        // Stores a list of delta maps.
+        // Key is associated with the earliest timestamp etc... (0: transition from 0-->1)
+        Dictionary<uint, TRS_Snapshot> DeltaMap;
 
 
         #endregion
 #endif
-        public GameObject DebugCube;
         double lastClientSendTime;
         public double lastServerSendTime;
 
-        [Header("Send Interval Multiplier")]
-        [Tooltip("Check/Sync every multiple of Network Manager send interval (= 1 / NM Send Rate), instead of every send interval.")]
-        [Range(1, 120)]
-        const uint sendIntervalMultiplier = 1; // not implemented yet
-
         [Header("Client Side Interpolation")]
-        public bool useMirrorInterpolation; // Only handles transforms and not rigidbodies
-        // [Tooltip("Add a small timeline offset to account for decoupled arrival of NetworkTime and NetworkTransform snapshots.\nfixes: https://github.com/MirrorNetworking/Mirror/issues/3427")]
-        // public bool timelineOffset = false;
         public int redudancyCapacity;
         public int frameSmoothing;
         public bool predictRotation;
         public float broadcastInterval;
         public float replyInterval;
-
-        // Ninja's Notes on offset & mulitplier:
-        // 
-        // In a no multiplier scenario:
-        // 1. Snapshots are sent every frame (frame being 1 NM send interval).
-        // 2. Time Interpolation is set to be 'behind' by 2 frames times.
-        // In theory where everything works, we probably have around 2 snapshots before we need to interpolate snapshots. From NT perspective, we should always have around 2 snapshots ready, so no stutter.
-        // 
-        // In a multiplier scenario:
-        // 1. Snapshots are sent every 10 frames.
-        // 2. Time Interpolation remains 'behind by 2 frames'.
-        // When everything works, we are receiving NT snapshots every 10 frames, but start interpolating after 2. 
-        // Even if I assume we had 2 snapshots to begin with to start interpolating (which we don't), by the time we reach 13th frame, we are out of snapshots, and have to wait 7 frames for next snapshot to come. This is the reason why we absolutely need the timestamp adjustment. We are starting way too early to interpolate. 
-
         InputCmd currentCmd;
         bool validCmd = false;
         List<InputGroup> currentCmds;
@@ -128,10 +106,13 @@ namespace Mirror
             currentCmds = new List<InputGroup>();
             ReplayCommands = new List<InputCmd>();
             SnapshotMap = new Dictionary<uint, TRS_Snapshot>();
+            DeltaMap = new Dictionary<uint, TRS_Snapshot>();
             InputQueue = new Queue<InputGroup>();
             FastIQKeys = new();
+            KeysToDelete = new();
             PreviousInputQueue = new CircularQueueWrapper(redudancyCapacity);
             DelayReplyQueue = new Queue<DelayReply>();
+
         }
         void Awake()
         {
@@ -141,7 +122,8 @@ namespace Mirror
         private TRS_Snapshot CreateNewSnapshot()
         {
             Rigidbody rb = target.GetComponent<Rigidbody>();
-            return new TRS_Snapshot(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity);
+            TRS_Snapshot snapshot = new(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity);
+            return snapshot;
         }
         public void InputDown(InputCmd cmd)
         {
@@ -154,9 +136,53 @@ namespace Mirror
         }
         InputGroup NewInputGrouping()
         {
-            InputGroup grp = new InputGroup(redudancyCapacity);
+            InputGroup grp = new(redudancyCapacity);
             grp.Fill(PreviousInputQueue.CommandArray());
             return grp;
+        }
+        void SaveAndSnap(uint seqNumber, TRS_Snapshot snapshot, InputCmd command)
+        {
+            if (!SnapshotMap.ContainsKey(seqNumber))
+            {
+                // Create and save position in the snapshot map
+                SnapshotMap.Add(seqNumber, snapshot);
+                // Record the difference between position i and i+1
+                if (ReplayCommands.Count > 0)
+                {
+                    uint mostRecentKey = ReplayCommands[ReplayCommands.Count - 1].seq; // also the early key
+
+                    TRS_Snapshot early = SnapshotMap[mostRecentKey];
+                    TRS_Snapshot deltaSnapshot = TRS_Snapshot.Delta(early, snapshot);
+                    if (!DeltaMap.ContainsKey(mostRecentKey))
+                    {
+                        DeltaMap.Add(mostRecentKey, deltaSnapshot);
+                    }
+                    else
+                    {
+                        DeltaMap[mostRecentKey] = deltaSnapshot; // Overwrite
+                    }
+
+                    if (seqNumber - 1 != mostRecentKey)
+                    {
+                        Debug.LogWarning($"Creating delta between {seqNumber} and {mostRecentKey}");
+                    }
+                    // Synchronized Key Deletion
+                    if (KeysToDelete.Contains(mostRecentKey))
+                    {
+                        print($"REMOVING {mostRecentKey}");
+                        KeysToDelete.Remove(mostRecentKey);
+                        SnapshotMap.Remove(mostRecentKey);
+                    }
+                }
+                // Save the positions in my own lists
+                if (ReplayCommands.Count < numberCommands)
+                {
+                    // Increment commands to replay
+                    ReplayCommands.Add(command);
+                }
+
+
+            }
         }
         TRS_Snapshot emergencySnap;
         void RecordMoves(InputCmd cmd)
@@ -166,13 +192,13 @@ namespace Mirror
             {
                 deltaCmdCount += 1;
                 currentCmd.ticks = deltaCmdCount; // Continue counting up!
-                // //print("Repeated Command");
+                // print("Repeated Command");
                 emergencySnap = CreateNewSnapshot(); // Create snapshot after the move
             }
             else if (validCmd && !InputCmd.CmpActions(cmd, currentCmd))
             {
 
-                // //print("Valid Prior");
+                // print("Valid Prior");
                 // Add old command over
                 currentCmd.seq = seqSendUpdate++;
                 currentCmd.ticks = deltaCmdCount;
@@ -181,18 +207,7 @@ namespace Mirror
                 PreviousInputQueue.Enqueue(currentCmd);
                 currentCmds.Add(NewInputGrouping());
                 uint seqNumber = currentCmd.seq;
-                // 
-                if (!SnapshotMap.ContainsKey(seqNumber))
-                {
-                    // //print($"Creating Snapshot At {emergencySnap.position}");
-                    SnapshotMap.Add(seqNumber, emergencySnap);
-                    // Save the positions in my own lists
-                    if (ReplayCommands.Count < numberCommands)
-                    {
-                        // Increment commands to replay
-                        ReplayCommands.Add(currentCmd);
-                    }
-                }
+                SaveAndSnap(seqNumber, emergencySnap, currentCmd);
                 currentCmd = cmd; // Update current command to the new command
             }
             else
@@ -303,7 +318,10 @@ namespace Mirror
         void RpcAckOutOfOrder(uint packetID)
         {
             // Removes Packets which are out of order!
-            bool removed = SnapshotMap.Remove(packetID);
+            if (SnapshotMap.ContainsKey(packetID))
+            {
+                KeysToDelete.Add(packetID);
+            }
         }
         uint MostRecentKey()
         {
@@ -442,12 +460,7 @@ namespace Mirror
 
                     PreviousInputQueue.Enqueue(emptyCommand);
                     InputGroup toSendCmd = NewInputGrouping();
-
-                    SnapshotMap.Add(emptyCommand.seq, CreateNewSnapshot());
-                    if (ReplayCommands.Count < numberCommands)
-                    {
-                        ReplayCommands.Add(emptyCommand);
-                    }
+                    SaveAndSnap(emptyCommand.seq, CreateNewSnapshot(), emptyCommand);
                     CmdUpdateInputLists(toSendCmd, emptyCommand.seq);
                     repeated = noInputUpdateRate;
                 }
@@ -460,17 +473,8 @@ namespace Mirror
                     PreviousInputQueue.Enqueue(currentCmd);
                     InputGroup toSendCmd = NewInputGrouping();
                     // Save the positions in my own lists
-                    if (ReplayCommands.Count < numberCommands)
-                    {
-                        ReplayCommands.Add(currentCmd);
-                    }
-
                     var sn = emergencySnap;
-                    if (!SnapshotMap.ContainsKey(currentCmd.seq))
-                    {
-                        SnapshotMap.Add(currentCmd.seq, sn);
-                    }
-
+                    SaveAndSnap(currentCmd.seq, sn, currentCmd);
                     //print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
                     CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
 
@@ -495,7 +499,15 @@ namespace Mirror
             }
         }
         #region Networked Physics
-
+        private void PrintReplayBuffer(double id)
+        {
+            string elements = "";
+            foreach (InputCmd command in ReplayCommands)
+            {
+                elements += command.seq + ", ";
+            }
+            print($"Start at {id} vs {rewindID}, buffer contains [{elements}]");
+        }
         double rewindID;
         /// <summary>
         /// Does the rewinding. Note that values above 10ish start to be really slow to correct
@@ -522,7 +534,6 @@ namespace Mirror
             Vector3 beforeV = trv.velocity;
             Quaternion beforeR = transform.localRotation;
             Vector3 beforeAV = trv.angularVelocity;
-
             if (predictRotation)
             {
                 beforeR = transform.localRotation;
@@ -537,72 +548,81 @@ namespace Mirror
                 trv.angularVelocity = lastValid.angVel;
                 this.transform.localRotation = lastValid.rotation;
             }
-            string elements = "";
-            foreach (InputCmd command in ReplayCommands)
-            {
-                elements += command.seq + ", ";
-            }
-            print($"Start at {id} vs {rewindID}, buffer contains [{elements}]");
 
-            // If ReplayCommand is one no need to replay because that's just the base command
-            int toRemove = int.MinValue;
-            // In the event I recieve state t1 before t0, 
-            // Resimulate from t1, and then remove it alongside everything prior.
-            for (int i = 0; i < ReplayCommands.Count; i++)
+            if (ReplayCommands.Count - 1 > 0)
             {
-                if (ReplayCommands[i].seq == id)
+                // If ReplayCommand is one no need to replay because that's just the base command
+                int toRemove = int.MinValue;
+                // In the event I recieve state t1 before t0, 
+                // Resimulate from t1, and then remove it alongside everything prior.
+                for (int i = 0; i < ReplayCommands.Count; i++)
                 {
-                    toRemove = i;
-                    break;
+                    if (ReplayCommands[i].seq == id)
+                    {
+                        toRemove = i;
+                        break;
+                    }
+                }
+                NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
+                int iteration = toRemove;
+                if (toRemove < 0)
+                {
+                    yield break; // no point in processing this element
+                }
+                NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
+                while (iteration >= 0 && iteration < ReplayCommands.Count - 1)
+                {
+                    // Replay all commands that have not been verified by the server
+                    InputCmd recent = ReplayCommands[iteration];
+                    controller.ReplayingInputs(recent);
+                    // Simulate it forwards by a delta time
+                    Vector3 beforeSim = transform.localPosition;
+                    manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
+                    print($"DeltaMap vs Physics [{recent.seq}] {DeltaMap[recent.seq].position} {this.transform.localPosition - beforeSim}");
+                    /*
+                    if (SnapshotMap.ContainsKey(recent.seq))
+                    {
+                        // replace that element with the udpated version
+                        TRS_Snapshot replacement = new();
+                        // zeroeth-order
+                        replacement.position = target.transform.localPosition;
+                        replacement.rotation = target.transform.localRotation;
+                        // first-order
+                        replacement.velocity = trv.velocity;
+                        replacement.angVel = trv.angularVelocity;
+                        SnapshotMap[recent.seq] = replacement;
+                    }
+                    */
+
+                    iteration += 1;
+                }
+                NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
+
+                if (toRemove == ReplayCommands.Count - 1)
+                {
+                    ReplayCommands.Clear();
+                    DeltaMap.Clear(); // follows ReplayCommands
+                    toRemove = -1;
+                }
+                for (int i = 0; i <= toRemove; i++)
+                {
+                    if (ReplayCommands.Count > 0)
+                    {
+                        uint removeID = ReplayCommands[0].seq;
+                        if (DeltaMap.ContainsKey(removeID))
+                        {
+                            DeltaMap.Remove(removeID);
+                        }
+                        ReplayCommands.RemoveAt(0); // remove starting from the front
+                    }
                 }
             }
-            NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
-            print("ISPAUSED: " + manager.IsNetworkSimulationPaused());
-            NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
-            int iteration = toRemove;
-            if (toRemove < 0)
-            {
-                yield break; // no point in processing this element
-            }
-
-            while (iteration >= 0 && iteration < ReplayCommands.Count)
-            {
-                // Replay all commands that have not been verified by the server
-                InputCmd recent = ReplayCommands[iteration];
-                controller.ReplayingInputs(recent);
-                // Simulate it forwards by a delta time
-                manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
-                // GameObject destroy2 = Instantiate(DebugCube, this.transform.localPosition, this.transform.rotation);
-                // destroy2.GetComponent<MeshRenderer>().material.color = new Color(1, 0, 0, (iteration + 0.1f) / ReplayCommands.Count);
-                // Destroy(destroy2, .5f);
-                if (SnapshotMap.ContainsKey(recent.seq))
-                {
-                    // replace that element with the udpated version
-                    TRS_Snapshot replacement = new();
-                    // zeroeth-order
-                    replacement.position = target.transform.localPosition;
-                    replacement.rotation = target.transform.localRotation;
-                    // first-order
-                    replacement.velocity = trv.velocity;
-                    replacement.angVel = trv.angularVelocity;
-                    SnapshotMap[recent.seq] = replacement;
-                }
-
-
-                iteration += 1;
-            }
-            NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
-
-            if (toRemove == ReplayCommands.Count - 1)
+            else
             {
                 ReplayCommands.Clear();
-                toRemove = -1;
+                DeltaMap.Clear(); // follows ReplayCommands
             }
-            for (int i = 0; i <= toRemove; i++)
-            {
-                if (ReplayCommands.Count > 0)
-                    ReplayCommands.RemoveAt(0); // remove starting from the front
-            }
+
             rewindID = rewindID < id ? id : rewindID; // store latest processing frame
 
 
@@ -622,9 +642,10 @@ namespace Mirror
             {
                 yield break;
             }
-            print("POST CORRECTION ERROR: " + (before - finalPosition).magnitude);
-            if ((before - finalPosition).magnitude > instaSnapError)
+            float snappingError = (before - finalPosition).magnitude;
+            if (snappingError > instaSnapError)
             {
+                // print($"SNAPPING CORRECTION ERROR: Before [{before}] After [{finalPosition}] {snappingError}");
                 this.transform.localPosition = finalPosition;
                 target.GetComponent<Rigidbody>().velocity = finalVel;
                 if (predictRotation)
@@ -711,7 +732,7 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
-                    print($"Recieved latest: {rewindID} id: " + id.ToString() + $" {mgerror}");
+                    // print($"ERROR ON [{id}] My Snapshot {localSnap.position} Server Snapshot {serverSnap.position}");
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else
@@ -720,33 +741,39 @@ namespace Mirror
                     // If no errors, means this localSnapshot is okay
                     // Remove this one localSnapshot
                     int target = -1;
+                    uint targetNumber = 0;
                     for (int i = 0; i < ReplayCommands.Count; i++)
                     {
                         if (ReplayCommands[i].seq == id)
                         {
                             target = i;
+                            targetNumber = ReplayCommands[i].seq;
                             break;
                         }
                     }
                     rewindID = rewindID < id ? id : rewindID;
-                    ReplayCommands.RemoveAt(target);
+                    if (target > 0)
+                    {
+                        ReplayCommands.RemoveAt(target);
+                        // This delta map is being processed and is not used so clear DeltaMap.
+                        if (DeltaMap.ContainsKey(targetNumber))
+                        {
+                            DeltaMap.Remove(targetNumber);
+                        }
+                    }
+
                 }
-
-
                 // Perform an error check, and if not, correct.
                 // To correct, just lerp between current position and hypothetical position
+                KeysToDelete.Add(id);
             }
             else if (SnapshotMap.Count > 0)
             {
-                //     //print("Recieved " + id.ToString()
-                // + $"!![{serverSnap.position}] NOT FOUND IN SNAPMAP");
-                // Automatically perform corrections
+                // This is actually an invalid condition...
+                // TODO FIX
                 DoPositionErrorCorrect(id, serverSnap);
+                KeysToDelete.Add(id);
             }
-
-            SnapshotMap.Remove(id);
-            // Compares the positions and determines whether or not we need to update or not...
-            // Need to go change the original changing function
         }
 
         void UpdateServerBroadcast()

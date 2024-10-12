@@ -17,5 +17,20 @@ public struct TRS_Snapshot
         angVel = a;
     }
 
+    /// <summary>
+    /// Creates a snapshot representing the delta states between two snapshots in time.
+    /// </summary>
+    /// <param name="start"> Snapshot that occurs earlier in time</param>
+    /// <param name="end"> Snapshot that occurs later in time</param>
+    /// <returns></returns>
+    public static TRS_Snapshot Delta(TRS_Snapshot start, TRS_Snapshot end)
+    {
+        return new TRS_Snapshot(
+        end.position - start.position,
+        end.velocity - start.velocity,
+        end.rotation * Quaternion.Inverse(start.rotation),
+        end.angVel - start.angVel);
+    }
+
 
 }

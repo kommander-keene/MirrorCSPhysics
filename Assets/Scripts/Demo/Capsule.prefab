@@ -189,14 +189,14 @@ MonoBehaviour:
   lastServerSendTime: 0
   useMirrorInterpolation: 0
   redudancyCapacity: 4
-  frameSmoothing: 3
+  frameSmoothing: 2
   predictRotation: 0
   broadcastInterval: 0.033333335
   replyInterval: 0.033333335
   errorMargin: 0.001
   correctionAmount: 0.2
-  correctionAmountVelocities: 0.02
-  noInputUpdateRate: 0
-  instaSnapError: 100
+  correctionAmountVelocities: 0.015
+  noInputUpdateRate: 1
+  instaSnapError: 0
   timeStampAdjustment: 0
   offset: 0

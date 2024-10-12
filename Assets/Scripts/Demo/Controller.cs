@@ -69,46 +69,8 @@ public class Controller : NetworkBehaviour, IController
     #region shared 
     void Walk(float AD, float WS, float J)
     {
-        if (WS != 0)
-        {
-            if (!determinism)
-            {
-                // driver.AddForce(Vector3.forward * speed * Mathf.Sign(WS), ForceMode.VelocityChange);
-                driver.velocity = Vector3.Lerp(-driver.transform.up * speed * Mathf.Sign(WS), driver.velocity, 0.9f);
-            }
-            else
-            {
-                driver.transform.localPosition += Vector3.forward * .5f * Mathf.Sign(WS);
-            }
-
-
-            // StartCoroutine(balls());
-            // pressed = false;
-            // driver.transform.localPosition = Vector3.zero;
-        }
-
-        if (AD != 0)
-        {
-            if (!determinism)
-            {
-                // driver.transform.localPosition += Vector3.right * .5f * Mathf.Sign(AD);
-                driver.velocity = Vector3.Lerp(driver.transform.right * speed * Mathf.Sign(AD), driver.velocity, 0.9f);
-                // driver.AddForce(Vector3.right * speed * Mathf.Sign(AD), ForceMode.VelocityChange);
-            }
-            else
-            {
-                this.transform.position += Vector3.right * 0.5f * Mathf.Sign(AD);
-            }
-
-
-        }
-        if (J != 0)
-        {
-            // driver.AddForce(Vector3.up * 20, ForceMode.VelocityChange);
-            if (isLocalPlayer)
-                driver.position += Vector3.right * UnityEngine.Random.Range(2f, 3f); // purposefully cause non-determinism
-        }
-
+        Vector2 direction = new Vector2(AD, WS);
+        driver.velocity = -driver.transform.up * speed * direction.y + driver.transform.right * speed * direction.x;
     }
     #endregion
 }
