@@ -5,6 +5,7 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using System;
+using System.Runtime.InteropServices;
 
 namespace Mirror
 {
@@ -140,6 +141,7 @@ namespace Mirror
             grp.Fill(PreviousInputQueue.CommandArray());
             return grp;
         }
+        TRS_Snapshot newestSnapshot; // store and update delta function between latest Snapshot and Current Position;
         void SaveAndSnap(uint seqNumber, TRS_Snapshot snapshot, InputCmd command)
         {
             if (!SnapshotMap.ContainsKey(seqNumber))
@@ -149,29 +151,31 @@ namespace Mirror
                 // Record the difference between position i and i+1
                 if (ReplayCommands.Count > 0)
                 {
-                    uint mostRecentKey = ReplayCommands[ReplayCommands.Count - 1].seq; // also the early key
-
-                    TRS_Snapshot early = SnapshotMap[mostRecentKey];
+                    uint replayRecent = ReplayCommands[ReplayCommands.Count - 1].seq; // also the early key
+                    if (DeltaMap.ContainsKey(replayRecent))
+                    {
+                        // prevents the system from trying to re-access deleted/processed snapshots
+                        return;
+                    }
+                    TRS_Snapshot early = SnapshotMap[replayRecent];
                     TRS_Snapshot deltaSnapshot = TRS_Snapshot.Delta(early, snapshot);
-                    if (!DeltaMap.ContainsKey(mostRecentKey))
+                    newestSnapshot = snapshot;
+                    if (!DeltaMap.ContainsKey(replayRecent))
                     {
-                        DeltaMap.Add(mostRecentKey, deltaSnapshot);
-                    }
-                    else
-                    {
-                        DeltaMap[mostRecentKey] = deltaSnapshot; // Overwrite
+                        DeltaMap.Add(replayRecent, deltaSnapshot);
                     }
 
-                    if (seqNumber - 1 != mostRecentKey)
+                    if (seqNumber - 1 != replayRecent)
                     {
-                        Debug.LogWarning($"Creating delta between {seqNumber} and {mostRecentKey}");
+                        Debug.LogWarning($"Creating delta between {seqNumber} and {replayRecent}");
                     }
+
                     // Synchronized Key Deletion
-                    if (KeysToDelete.Contains(mostRecentKey))
+                    if (KeysToDelete.Contains(replayRecent))
                     {
-                        print($"REMOVING {mostRecentKey}");
-                        KeysToDelete.Remove(mostRecentKey);
-                        SnapshotMap.Remove(mostRecentKey);
+                        print($"REMOVING {replayRecent}");
+                        KeysToDelete.Remove(replayRecent);
+                        SnapshotMap.Remove(replayRecent);
                     }
                 }
                 // Save the positions in my own lists
@@ -508,6 +512,13 @@ namespace Mirror
             }
             print($"Start at {id} vs {rewindID}, buffer contains [{elements}]");
         }
+        private TRS_Snapshot DeltaCurrent()
+        {
+            // Create a delta function between the current time and latest snapshot
+
+            TRS_Snapshot latest = newestSnapshot;
+            return TRS_Snapshot.Delta(latest, CreateNewSnapshot());
+        }
         double rewindID;
         /// <summary>
         /// Does the rewinding. Note that values above 10ish start to be really slow to correct
@@ -534,13 +545,9 @@ namespace Mirror
             Vector3 beforeV = trv.velocity;
             Quaternion beforeR = transform.localRotation;
             Vector3 beforeAV = trv.angularVelocity;
-            if (predictRotation)
-            {
-                beforeR = transform.localRotation;
-                beforeAV = trv.angularVelocity;
-            }
-            // Set to the start
-
+            // TODO how do I deal with this the final delta command between the last replay and my current position 
+            TRS_Snapshot finalSnapshot = DeltaCurrent();
+            // Move the rigidbody to the beginning
             this.transform.localPosition = lastValid.position;
             trv.velocity = lastValid.velocity;
             if (predictRotation)
@@ -548,9 +555,14 @@ namespace Mirror
                 trv.angularVelocity = lastValid.angVel;
                 this.transform.localRotation = lastValid.rotation;
             }
-
-            if (ReplayCommands.Count - 1 > 0)
+            // Start movement from last valid positions
+            Vector3 finalPosition = lastValid.position;
+            Vector3 finalVel = lastValid.velocity;
+            Vector3 finalAVB = lastValid.angVel;
+            Quaternion finalRot = lastValid.rotation;
+            if (ReplayCommands.Count > 1)
             {
+
                 // If ReplayCommand is one no need to replay because that's just the base command
                 int toRemove = int.MinValue;
                 // In the event I recieve state t1 before t0, 
@@ -563,40 +575,40 @@ namespace Mirror
                         break;
                     }
                 }
-                NetworkPhysicsManager manager = NetworkPhysicsManager.instance;
-                int iteration = toRemove;
+                int iteration = toRemove + 1;
                 if (toRemove < 0)
                 {
                     yield break; // no point in processing this element
                 }
-                NetworkPhysicsManager.instance.ToggleNetworkSimulation(false); // stop manual physics network simulation
+                PrintReplayBuffer(id);
+
                 while (iteration >= 0 && iteration < ReplayCommands.Count - 1)
                 {
                     // Replay all commands that have not been verified by the server
                     InputCmd recent = ReplayCommands[iteration];
-                    controller.ReplayingInputs(recent);
-                    // Simulate it forwards by a delta time
-                    Vector3 beforeSim = transform.localPosition;
-                    manager.NetworkSimulate(Time.fixedDeltaTime * recent.ticks);
-                    print($"DeltaMap vs Physics [{recent.seq}] {DeltaMap[recent.seq].position} {this.transform.localPosition - beforeSim}");
-                    /*
+                    TRS_Snapshot currentDelta = DeltaMap[recent.seq];
+                    // Step forward simulation using delta functions
+                    print($"Rewind {recent.seq}: {currentDelta.position}");
+                    finalPosition += currentDelta.position;
+                    finalVel += currentDelta.velocity;
+                    finalAVB += currentDelta.angVel;
+                    finalRot *= currentDelta.rotation;
+
                     if (SnapshotMap.ContainsKey(recent.seq))
                     {
                         // replace that element with the udpated version
                         TRS_Snapshot replacement = new();
                         // zeroeth-order
-                        replacement.position = target.transform.localPosition;
-                        replacement.rotation = target.transform.localRotation;
+                        replacement.position = finalPosition;
+                        replacement.rotation = finalRot;
                         // first-order
-                        replacement.velocity = trv.velocity;
-                        replacement.angVel = trv.angularVelocity;
+                        replacement.velocity = finalVel;
+                        replacement.angVel = finalAVB;
                         SnapshotMap[recent.seq] = replacement;
                     }
-                    */
 
                     iteration += 1;
                 }
-                NetworkPhysicsManager.instance.ToggleNetworkSimulation(true);
 
                 if (toRemove == ReplayCommands.Count - 1)
                 {
@@ -616,28 +628,20 @@ namespace Mirror
                         ReplayCommands.RemoveAt(0); // remove starting from the front
                     }
                 }
+
             }
             else
             {
+                print("CLEARNING STEP");
                 ReplayCommands.Clear();
                 DeltaMap.Clear(); // follows ReplayCommands
             }
 
+
+            print($"Position Difference {finalSnapshot.position}");
+            #region Reconcilliation
             rewindID = rewindID < id ? id : rewindID; // store latest processing frame
 
-
-            Vector3 finalPosition = this.transform.localPosition;
-            Vector3 finalVel = trv.velocity;
-
-            Vector3 finalAVB = trv.angularVelocity;
-            Quaternion finalRot = transform.localRotation;
-            // GameObject destroy2 = Instantiate(DebugCube, lastValid.position, this.transform.rotation);
-            // destroy2.GetComponent<MeshRenderer>().material.color = new Color(1, 0, 0, 0.2f);
-            // Destroy(destroy2, .1f);
-
-            // destroy2 = Instantiate(DebugCube, finalPosition, finalRot);
-            // destroy2.GetComponent<MeshRenderer>().material.color = new Color(0, 1, 0, 0.2f);
-            // Destroy(destroy2, .1f);
             if (rewindID > id)
             {
                 yield break;
@@ -645,7 +649,7 @@ namespace Mirror
             float snappingError = (before - finalPosition).magnitude;
             if (snappingError > instaSnapError)
             {
-                // print($"SNAPPING CORRECTION ERROR: Before [{before}] After [{finalPosition}] {snappingError}");
+                print($"SNAPPING CORRECTION ERROR: Before [{before}] After [{finalPosition}] {snappingError}");
                 this.transform.localPosition = finalPosition;
                 target.GetComponent<Rigidbody>().velocity = finalVel;
                 if (predictRotation)
@@ -701,6 +705,7 @@ namespace Mirror
                     frames -= 1;
                 }
             }
+            #endregion
         }
         #endregion
         void DoPositionErrorCorrect(double a, TRS_Snapshot snap)
@@ -709,7 +714,6 @@ namespace Mirror
             // Run difference through some function that adjusts lerp coefficient based off how different you are
             // this.transform.localPosition = snap.position;
             StartCoroutine(Rewind(snap, a));
-
         }
         double lastRecievedTime = -1.0;
         [ClientRpc]
@@ -977,21 +981,6 @@ CmdClientToServerSync(
                 if (syncRotation) writer.WriteQuaternion(target.localRotation);
                 if (syncScale) writer.WriteVector3(target.localScale);
             }
-
-        }
-
-        void Start()
-        {
-            // Always register anything that interacts with the net objects
-            if (NetworkPhysicsManager.instance != null)
-            {
-                //Add a new object that is exclusively physics simulated
-                uint netID = target.GetComponent<NetworkIdentity>().netId;
-                bool success = NetworkPhysicsManager.instance.RegisterNetworkPhysicsObject(netID, this.gameObject, true);
-                // print($"PHYS: Reg player with netID {netID} {success}");
-                Debug.Assert(success);
-            }
-            //Add only myself, since we don't really care where the others are, we are not resimulating them.
 
         }
 

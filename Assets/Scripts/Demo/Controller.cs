@@ -70,7 +70,15 @@ public class Controller : NetworkBehaviour, IController
     void Walk(float AD, float WS, float J)
     {
         Vector2 direction = new Vector2(AD, WS);
-        driver.velocity = -driver.transform.up * speed * direction.y + driver.transform.right * speed * direction.x;
+        if (!determinism)
+        {
+            driver.velocity = -driver.transform.up * speed * direction.y + driver.transform.right * speed * direction.x;
+        }
+        else
+        {
+            driver.position += Time.fixedDeltaTime * (-driver.transform.up * speed * direction.y + driver.transform.right * speed * direction.x);
+        }
+
     }
     #endregion
 }

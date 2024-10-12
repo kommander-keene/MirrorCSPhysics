@@ -133,7 +133,7 @@ MonoBehaviour:
   syncDirection: 0
   syncMode: 0
   syncInterval: 0
-  determinism: 0
+  determinism: 1
   cubePrefab: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
   name: {fileID: 0}
   speed: 25
@@ -185,17 +185,15 @@ MonoBehaviour:
   positionSensitivity: 0.01
   rotationSensitivity: 0.01
   scaleSensitivity: 0.01
-  DebugCube: {fileID: 5109106629795551823, guid: fc2299f002f866346987aa1a802b3ba4, type: 3}
   lastServerSendTime: 0
-  useMirrorInterpolation: 0
   redudancyCapacity: 4
   frameSmoothing: 2
   predictRotation: 0
   broadcastInterval: 0.033333335
   replyInterval: 0.033333335
   errorMargin: 0.001
-  correctionAmount: 0.2
-  correctionAmountVelocities: 0.015
+  correctionAmount: 0
+  correctionAmountVelocities: 0
   noInputUpdateRate: 1
   instaSnapError: 0
   timeStampAdjustment: 0
