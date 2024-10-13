@@ -76,7 +76,7 @@ public class Controller : NetworkBehaviour, IController
         }
         else
         {
-            driver.position += Time.fixedDeltaTime * (Random.value > 0.5 ? 1 : 0) * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
+            driver.position += Time.fixedDeltaTime * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
         }
 
     }

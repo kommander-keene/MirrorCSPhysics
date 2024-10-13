@@ -149,6 +149,7 @@ namespace Mirror
                 // Record the difference between position i and i+1
                 if (ReplayCommands.Count > 0)
                 {
+                    print($"Writing to SnapshotMap for {seqNumber}");
                     uint replayRecent = ReplayCommands[ReplayCommands.Count - 1].seq; // also the early key
                     if (DeltaMap.ContainsKey(replayRecent))
                     {
@@ -502,7 +503,6 @@ namespace Mirror
         double rewindID;
         private (CSSnapshot, CSSnapshot) Rewind(CSSnapshot serverSnapshot, double serverID)
         {
-            serverSnapshot = SnapshotMap[(uint)serverID]; // TESTING REMOVE
 
             if (ReplayCommands.Count == 0)
             {
@@ -532,7 +532,7 @@ namespace Mirror
             Vector3 finalAVB = serverSnapshot.angVel;
             Quaternion finalRot = serverSnapshot.rotation;
 
-            print($"Before corrections {serverID}: {before}");
+            // print($"Before corrections {serverID}: {before}");
             CSSnapshot lastProcessedIndex = CSSnapshot.Empty();
             if (ReplayCommands.Count > 1)
             {
@@ -555,6 +555,7 @@ namespace Mirror
                 {
                     return (CSSnapshot.Empty(), CSSnapshot.Empty()); // no point in processing this element
                 }
+                print($"Server Difference {serverID}: {SnapshotMap[(uint)serverID].position - serverSnapshot.position}");
                 lastProcessedIndex = SnapshotMap[ReplayCommands[ReplayCommands.Count - 1].seq];
                 while (iteration >= 0 && iteration < ReplayCommands.Count - 1)
                 {
@@ -566,7 +567,8 @@ namespace Mirror
                     finalVel += currentDelta.velocity;
                     finalAVB += currentDelta.angVel;
                     finalRot *= currentDelta.rotation;
-                    print($"Rewinding {recent.seq}->{recent.seq + 1} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
+                    CSSnapshot overwrite = new(finalPosition, finalVel, finalRot, finalAVB);
+                    // print($"Rewinding {recent.seq}->{recent.seq + 1} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
                     iteration += 1;
                 }
 
@@ -593,7 +595,7 @@ namespace Mirror
             }
             else
             {
-                print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
+                // print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
                 // Essentially last run command -> current position since server was instantaneous
                 lastProcessedIndex = serverSnapshot;
                 ReplayCommands.Clear();
@@ -622,7 +624,7 @@ namespace Mirror
                 yield break;
             }
             float snappingError = (before.position - after.position).magnitude;
-            print($"{serverID} CORRECTING ERROR {before.position} {after.position} {snappingError}");
+            // print($"{serverID} CORRECTING ERROR {before.position} {after.position} {snappingError}");
             CSSnapshot correctionDelta = CSSnapshot.Delta(before, after);
             if (snappingError > instaSnapError)
             {
