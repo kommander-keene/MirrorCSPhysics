@@ -567,15 +567,6 @@ namespace Mirror
                     finalAVB += currentDelta.angVel;
                     finalRot *= currentDelta.rotation;
                     print($"Rewinding {recent.seq}->{recent.seq + 1} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
-                    CSSnapshot replacement = new()
-                    {
-                        // zeroeth-order
-                        position = finalPosition,
-                        rotation = finalRot,
-                        // first-order
-                        velocity = finalVel,
-                        angVel = finalAVB
-                    };
                     iteration += 1;
                 }
 
@@ -621,7 +612,7 @@ namespace Mirror
             CSSnapshot finalSnapshot = new CSSnapshot(finalPosition, finalVel, finalRot, finalAVB);
             return (clientSnapshot, finalSnapshot);
         }
-        private IEnumerator Reconcile(CSSnapshot before, CSSnapshot after, CSSnapshot server, double serverID)
+        private IEnumerator Reconcile(CSSnapshot before, CSSnapshot after, double serverID)
         {
             var trv = target.GetComponent<Rigidbody>();
 
@@ -631,15 +622,16 @@ namespace Mirror
                 yield break;
             }
             float snappingError = (before.position - after.position).magnitude;
+            print($"{serverID} CORRECTING ERROR {before.position} {after.position} {snappingError}");
+            CSSnapshot correctionDelta = CSSnapshot.Delta(before, after);
             if (snappingError > instaSnapError)
             {
-                print($"CORRECTING ERROR {before.position} {after.position} {snappingError}");
-                this.transform.localPosition = after.position;
-                target.GetComponent<Rigidbody>().velocity = after.velocity;
+                this.transform.localPosition += correctionDelta.position;
+                target.GetComponent<Rigidbody>().velocity += correctionDelta.velocity;
                 if (predictRotation)
                 {
-                    transform.localRotation = after.rotation;
-                    trv.angularVelocity = after.angVel;
+                    transform.localRotation *= correctionDelta.rotation;
+                    trv.angularVelocity += correctionDelta.angVel;
                 }
             }
             else
@@ -711,15 +703,7 @@ namespace Mirror
             {
                 return;
             }
-            float snappingError = (before.position - after.position).magnitude;
-            print($"{a} CORRECTING ERROR {before.position} {after.position} {snappingError}");
-            CSSnapshot correctionDelta = CSSnapshot.Delta(before, after);
-            // simple snapping code
-            if (snappingError > instaSnapError)
-            {
-                this.transform.localPosition += correctionDelta.position;
-                // target.GetComponent<Rigidbody>().velocity = after.velocity;
-            }
+            StartCoroutine(Reconcile(before, after, a));
         }
         double lastRecievedTime = -1.0;
         [ClientRpc]
@@ -730,7 +714,6 @@ namespace Mirror
 
             if (SnapshotMap.TryGetValue(id, out localSnap))
             {
-
                 // Its in the queue!
                 float mgerror = (serverSnap.position - localSnap.position).magnitude;
                 bool skip = false;

@@ -134,6 +134,7 @@ MonoBehaviour:
   syncMode: 0
   syncInterval: 0
   determinism: 1
+  forces: 0
   cubePrefab: {fileID: 2131694990270107679, guid: 9ce014260d5502145a490a9332704a8c, type: 3}
   name: {fileID: 0}
   speed: 50

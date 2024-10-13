@@ -1,16 +1,13 @@
-using System.Collections.Generic;
 using System.Collections;
 using UnityEngine;
 using Mirror;
-using System.Collections.Specialized;
-using System;
-using UnityEngine.AI;
 
 public class Controller : NetworkBehaviour, IController
 {
 
     Rigidbody driver;
     public bool determinism;
+    public bool forces;
     public GameObject cubePrefab;
     public GameObject name;
     private CSNetworkTransform netCmdMg;
@@ -72,12 +69,14 @@ public class Controller : NetworkBehaviour, IController
         Vector2 direction = new Vector2(AD, WS);
         if (!determinism)
         {
-            // driver.velocity = Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x;
-            driver.AddForce(Vector3.forward * speed / 25 * direction.y + Vector3.right * speed / 25 * direction.x, ForceMode.VelocityChange);
+            if (!forces)
+                driver.velocity = Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x;
+            else
+                driver.AddForce(Vector3.forward * speed / 25 * direction.y + Vector3.right * speed / 25 * direction.x, ForceMode.VelocityChange);
         }
         else
         {
-            driver.position += Time.fixedDeltaTime * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
+            driver.position += Time.fixedDeltaTime * (Random.value > 0.5 ? 1 : 0) * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
         }
 
     }
