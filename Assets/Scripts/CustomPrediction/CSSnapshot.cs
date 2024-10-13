@@ -1,3 +1,4 @@
+using UnityEditor;
 using UnityEngine;
 public struct CSSnapshot
 {
@@ -8,6 +9,11 @@ public struct CSSnapshot
     public Quaternion rotation;
     public Vector3 angVel;
 
+    private static CSSnapshot empty = new CSSnapshot(Vector3.negativeInfinity, Vector3.negativeInfinity, Quaternion.identity, Vector3.negativeInfinity);
+    public static CSSnapshot Empty()
+    {
+        return empty;
+    }
     public CSSnapshot(Vector3 t, Vector3 v, Quaternion r, Vector3 a)
     {
         position = t;
@@ -16,4 +22,25 @@ public struct CSSnapshot
         rotation = r;
         angVel = a;
     }
+
+    /// <summary>
+    /// Creates a snapshot representing the delta states between two snapshots in time.
+    /// </summary>
+    /// <param name="start"> Snapshot that occurs earlier in time</param>
+    /// <param name="end"> Snapshot that occurs later in time</param>
+    /// <returns></returns>
+    public static CSSnapshot Delta(CSSnapshot start, CSSnapshot end)
+    {
+        if (start.Equals(end) && end.Equals(Empty()))
+        {
+            return Empty();
+        }
+        return new CSSnapshot(
+        end.position - start.position,
+        end.velocity - start.velocity,
+        end.rotation * Quaternion.Inverse(start.rotation),
+        end.angVel - start.angVel);
+    }
+
+
 }

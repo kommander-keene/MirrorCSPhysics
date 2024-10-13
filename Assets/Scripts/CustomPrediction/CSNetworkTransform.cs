@@ -4,8 +4,8 @@
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
-using System;
-using System.Runtime.InteropServices;
+using System.Data.Common;
+using UnityEngine.SceneManagement;
 
 namespace Mirror
 {
@@ -41,10 +41,10 @@ namespace Mirror
         Queue<InputGroup> InputQueue; // TODO Replace it with a FILO Queue.
         HashSet<uint> FastIQKeys;
         HashSet<uint> KeysToDelete;
-        Dictionary<uint, TRS_Snapshot> SnapshotMap;
+        Dictionary<uint, CSSnapshot> SnapshotMap;
         // Stores a list of delta maps.
         // Key is associated with the earliest timestamp etc... (0: transition from 0-->1)
-        Dictionary<uint, TRS_Snapshot> DeltaMap;
+        Dictionary<uint, CSSnapshot> DeltaMap;
 
 
         #endregion
@@ -91,9 +91,9 @@ namespace Mirror
 
         struct DelayReply
         {
-            public TRS_Snapshot snapshot;
+            public CSSnapshot snapshot;
             public uint mappingID;
-            public DelayReply(TRS_Snapshot snp, uint mID)
+            public DelayReply(CSSnapshot snp, uint mID)
             {
                 mappingID = mID;
                 snapshot = snp;
@@ -106,24 +106,23 @@ namespace Mirror
         {
             currentCmds = new List<InputGroup>();
             ReplayCommands = new List<InputCmd>();
-            SnapshotMap = new Dictionary<uint, TRS_Snapshot>();
-            DeltaMap = new Dictionary<uint, TRS_Snapshot>();
+            SnapshotMap = new Dictionary<uint, CSSnapshot>();
+            DeltaMap = new Dictionary<uint, CSSnapshot>();
             InputQueue = new Queue<InputGroup>();
             FastIQKeys = new();
             KeysToDelete = new();
             PreviousInputQueue = new CircularQueueWrapper(redudancyCapacity);
             DelayReplyQueue = new Queue<DelayReply>();
-
         }
         void Awake()
         {
             base.Awake();
             InitializeLists();
         }
-        private TRS_Snapshot CreateNewSnapshot()
+        private CSSnapshot CreateNewSnapshot()
         {
             Rigidbody rb = target.GetComponent<Rigidbody>();
-            TRS_Snapshot snapshot = new(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity);
+            CSSnapshot snapshot = new(target.transform.localPosition, rb.velocity, target.transform.localRotation, rb.angularVelocity);
             return snapshot;
         }
         public void InputDown(InputCmd cmd)
@@ -141,8 +140,7 @@ namespace Mirror
             grp.Fill(PreviousInputQueue.CommandArray());
             return grp;
         }
-        TRS_Snapshot newestSnapshot; // store and update delta function between latest Snapshot and Current Position;
-        void SaveAndSnap(uint seqNumber, TRS_Snapshot snapshot, InputCmd command)
+        void SnapAndSave(uint seqNumber, CSSnapshot snapshot, InputCmd command)
         {
             if (!SnapshotMap.ContainsKey(seqNumber))
             {
@@ -157,26 +155,18 @@ namespace Mirror
                         // prevents the system from trying to re-access deleted/processed snapshots
                         return;
                     }
-                    TRS_Snapshot early = SnapshotMap[replayRecent];
-                    TRS_Snapshot deltaSnapshot = TRS_Snapshot.Delta(early, snapshot);
-                    newestSnapshot = snapshot;
+                    CSSnapshot early = SnapshotMap[replayRecent];
+                    CSSnapshot deltaSnapshot = CSSnapshot.Delta(early, snapshot);
                     if (!DeltaMap.ContainsKey(replayRecent))
                     {
                         DeltaMap.Add(replayRecent, deltaSnapshot);
                     }
-
+                    // TESTS
                     if (seqNumber - 1 != replayRecent)
                     {
                         Debug.LogWarning($"Creating delta between {seqNumber} and {replayRecent}");
                     }
-
-                    // Synchronized Key Deletion
-                    if (KeysToDelete.Contains(replayRecent))
-                    {
-                        print($"REMOVING {replayRecent}");
-                        KeysToDelete.Remove(replayRecent);
-                        SnapshotMap.Remove(replayRecent);
-                    }
+                    Debug.Assert(early.position + deltaSnapshot.position == snapshot.position);
                 }
                 // Save the positions in my own lists
                 if (ReplayCommands.Count < numberCommands)
@@ -188,7 +178,7 @@ namespace Mirror
 
             }
         }
-        TRS_Snapshot emergencySnap;
+        CSSnapshot emergencySnap;
         void RecordMoves(InputCmd cmd)
         {
             cmdCount++;
@@ -211,7 +201,7 @@ namespace Mirror
                 PreviousInputQueue.Enqueue(currentCmd);
                 currentCmds.Add(NewInputGrouping());
                 uint seqNumber = currentCmd.seq;
-                SaveAndSnap(seqNumber, emergencySnap, currentCmd);
+                SnapAndSave(seqNumber, emergencySnap, currentCmd);
                 currentCmd = cmd; // Update current command to the new command
             }
             else
@@ -220,13 +210,12 @@ namespace Mirror
                 deltaCmdCount = 1;
                 cmd.ticks = 1;
                 currentCmd = cmd;
-                // //print("Invalid Prior");
                 validCmd = true; // The "list" is now populated with commands
                 emergencySnap = CreateNewSnapshot();
             }
         }
 
-        void DelayReplyEnq(uint id, TRS_Snapshot snapshot)
+        void DelayReplyEnq(uint id, CSSnapshot snapshot)
         {
             DelayReply dr = new(snapshot, id);
             DelayReplyQueue.Enqueue(dr);
@@ -251,8 +240,6 @@ namespace Mirror
         {
             return SnapshotMap.Count == 0 && ReplayCommands.Count == 0 && deltaCmdCount == 0;
         }
-        // double timeStampAdjustment => NetworkServer.sendInterval * (sendIntervalMultiplier - 1);
-        // double offset => timelineOffset ? NetworkServer.sendInterval * sendIntervalMultiplier : 0;
 
         protected override void Apply(TransformSnapshot interpolated, TransformSnapshot endGoal)
         {
@@ -398,7 +385,7 @@ namespace Mirror
                     {
                         toReplay = false;
                         // Generate new endpoint to send back to client
-                        TRS_Snapshot replySnap = CreateNewSnapshot();
+                        CSSnapshot replySnap = CreateNewSnapshot();
                         lastSeqNumber = serverReplaySID; // To keep track of last replayed ID
                         //print($"{replayed} Reply " + serverReplaySID.ToString() + $"({replySnap.position})");
                         DelayReplyEnq(lastSeqNumber, replySnap);
@@ -409,7 +396,7 @@ namespace Mirror
                     {
                         toReplay = false;
                         // Generate new endpoint to send back to client
-                        TRS_Snapshot replySnap = CreateNewSnapshot(); // Create New Snapshot
+                        CSSnapshot replySnap = CreateNewSnapshot(); // Create New Snapshot
                         lastSeqNumber = MostRecentKey(interGroupOffset); // Last Replayed ID
                         DelayReplyEnq(lastSeqNumber, replySnap);
                         //print($"{replayed} Reply S " + serverReplaySID.ToString() + $"({replySnap.position})");
@@ -464,7 +451,7 @@ namespace Mirror
 
                     PreviousInputQueue.Enqueue(emptyCommand);
                     InputGroup toSendCmd = NewInputGrouping();
-                    SaveAndSnap(emptyCommand.seq, CreateNewSnapshot(), emptyCommand);
+                    SnapAndSave(emptyCommand.seq, CreateNewSnapshot(), emptyCommand);
                     CmdUpdateInputLists(toSendCmd, emptyCommand.seq);
                     repeated = noInputUpdateRate;
                 }
@@ -478,7 +465,7 @@ namespace Mirror
                     InputGroup toSendCmd = NewInputGrouping();
                     // Save the positions in my own lists
                     var sn = emergencySnap;
-                    SaveAndSnap(currentCmd.seq, sn, currentCmd);
+                    SnapAndSave(currentCmd.seq, sn, currentCmd);
                     //print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
                     CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
 
@@ -512,101 +499,83 @@ namespace Mirror
             }
             print($"Start at {id} vs {rewindID}, buffer contains [{elements}]");
         }
-        private TRS_Snapshot DeltaCurrent()
-        {
-            // Create a delta function between the current time and latest snapshot
-
-            TRS_Snapshot latest = newestSnapshot;
-            return TRS_Snapshot.Delta(latest, CreateNewSnapshot());
-        }
         double rewindID;
-        /// <summary>
-        /// Does the rewinding. Note that values above 10ish start to be really slow to correct
-        /// </summary>
-        /// <param name="lastValid"></param>
-        /// <param name="frame_num"></param>
-        /// <returns></returns>
-        private IEnumerator Rewind(TRS_Snapshot lastValid, double id)
+        private (CSSnapshot, CSSnapshot) Rewind(CSSnapshot serverSnapshot, double serverID)
         {
-            int frame_num = frameSmoothing;
-            /**
-            * Rewind myself to my last valid state
-            * Do I have to rewind everything? Maybe.
-            */
+            serverSnapshot = SnapshotMap[(uint)serverID]; // TESTING REMOVE
+
             if (ReplayCommands.Count == 0)
             {
                 // Either nothing to replay
                 // or recieved ID has already be thrown away (old)
-                yield break;
+                return (CSSnapshot.Empty(), CSSnapshot.Empty());
             }
-            // Before times
             var trv = target.GetComponent<Rigidbody>();
+            // Save positions before performing corrections
             Vector3 before = this.transform.localPosition;
             Vector3 beforeV = trv.velocity;
             Quaternion beforeR = transform.localRotation;
             Vector3 beforeAV = trv.angularVelocity;
-            // TODO how do I deal with this the final delta command between the last replay and my current position 
-            TRS_Snapshot finalSnapshot = DeltaCurrent();
-            // Move the rigidbody to the beginning
-            this.transform.localPosition = lastValid.position;
-            trv.velocity = lastValid.velocity;
+            CSSnapshot clientSnapshot = new(before, beforeV, beforeR, beforeAV);
+            // Delta command to the most recent location
+            CSSnapshot currentSnapshotDelta = CSSnapshot.Empty();
+
+
             if (predictRotation)
             {
-                trv.angularVelocity = lastValid.angVel;
-                this.transform.localRotation = lastValid.rotation;
+                trv.angularVelocity = serverSnapshot.angVel;
+                this.transform.localRotation = serverSnapshot.rotation;
             }
             // Start movement from last valid positions
-            Vector3 finalPosition = lastValid.position;
-            Vector3 finalVel = lastValid.velocity;
-            Vector3 finalAVB = lastValid.angVel;
-            Quaternion finalRot = lastValid.rotation;
+            Vector3 finalPosition = serverSnapshot.position;
+            Vector3 finalVel = serverSnapshot.velocity;
+            Vector3 finalAVB = serverSnapshot.angVel;
+            Quaternion finalRot = serverSnapshot.rotation;
+
+            print($"Before corrections {serverID}: {before}");
+            CSSnapshot lastProcessedIndex = CSSnapshot.Empty();
             if (ReplayCommands.Count > 1)
             {
-
                 // If ReplayCommand is one no need to replay because that's just the base command
                 int toRemove = int.MinValue;
                 // In the event I recieve state t1 before t0, 
                 // Resimulate from t1, and then remove it alongside everything prior.
                 for (int i = 0; i < ReplayCommands.Count; i++)
                 {
-                    if (ReplayCommands[i].seq == id)
+                    if (ReplayCommands[i].seq == serverID)
                     {
                         toRemove = i;
                         break;
                     }
                 }
-                int iteration = toRemove + 1;
+                int iteration = toRemove;
+                // Ex: I had a list with IDs: [2, 3, 4]
+                // DeltaMap[0]{2->3} + DeltaMap[1]{3->4} + {4->Now}
                 if (toRemove < 0)
                 {
-                    yield break; // no point in processing this element
+                    return (CSSnapshot.Empty(), CSSnapshot.Empty()); // no point in processing this element
                 }
-                PrintReplayBuffer(id);
-
+                lastProcessedIndex = SnapshotMap[ReplayCommands[ReplayCommands.Count - 1].seq];
                 while (iteration >= 0 && iteration < ReplayCommands.Count - 1)
                 {
                     // Replay all commands that have not been verified by the server
                     InputCmd recent = ReplayCommands[iteration];
-                    TRS_Snapshot currentDelta = DeltaMap[recent.seq];
+                    CSSnapshot currentDelta = DeltaMap[recent.seq];
                     // Step forward simulation using delta functions
-                    print($"Rewind {recent.seq}: {currentDelta.position}");
                     finalPosition += currentDelta.position;
                     finalVel += currentDelta.velocity;
                     finalAVB += currentDelta.angVel;
                     finalRot *= currentDelta.rotation;
-
-                    if (SnapshotMap.ContainsKey(recent.seq))
+                    print($"Rewinding {recent.seq}->{recent.seq + 1} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
+                    CSSnapshot replacement = new()
                     {
-                        // replace that element with the udpated version
-                        TRS_Snapshot replacement = new();
                         // zeroeth-order
-                        replacement.position = finalPosition;
-                        replacement.rotation = finalRot;
+                        position = finalPosition,
+                        rotation = finalRot,
                         // first-order
-                        replacement.velocity = finalVel;
-                        replacement.angVel = finalAVB;
-                        SnapshotMap[recent.seq] = replacement;
-                    }
-
+                        velocity = finalVel,
+                        angVel = finalAVB
+                    };
                     iteration += 1;
                 }
 
@@ -616,6 +585,7 @@ namespace Mirror
                     DeltaMap.Clear(); // follows ReplayCommands
                     toRemove = -1;
                 }
+
                 for (int i = 0; i <= toRemove; i++)
                 {
                     if (ReplayCommands.Count > 0)
@@ -632,95 +602,131 @@ namespace Mirror
             }
             else
             {
-                print("CLEARNING STEP");
+                print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
+                // Essentially last run command -> current position since server was instantaneous
+                lastProcessedIndex = serverSnapshot;
                 ReplayCommands.Clear();
                 DeltaMap.Clear(); // follows ReplayCommands
             }
 
-
-            print($"Position Difference {finalSnapshot.position}");
-            #region Reconcilliation
-            rewindID = rewindID < id ? id : rewindID; // store latest processing frame
-
-            if (rewindID > id)
+            currentSnapshotDelta = CSSnapshot.Delta(lastProcessedIndex, CreateNewSnapshot());
+            if (!currentSnapshotDelta.Equals(CSSnapshot.Empty()))
             {
+                // Roll-forwards the position
+                finalPosition += currentSnapshotDelta.position;
+                finalVel += currentSnapshotDelta.velocity;
+                finalAVB += currentSnapshotDelta.angVel;
+                finalRot *= currentSnapshotDelta.rotation;
+            }
+            CSSnapshot finalSnapshot = new CSSnapshot(finalPosition, finalVel, finalRot, finalAVB);
+            return (clientSnapshot, finalSnapshot);
+        }
+        private IEnumerator Reconcile(CSSnapshot before, CSSnapshot after, CSSnapshot server, double serverID)
+        {
+            var trv = target.GetComponent<Rigidbody>();
+
+            if (rewindID > serverID)
+            {
+                print("NOPE");
                 yield break;
             }
-            float snappingError = (before - finalPosition).magnitude;
+            float snappingError = (before.position - after.position).magnitude;
             if (snappingError > instaSnapError)
             {
-                print($"SNAPPING CORRECTION ERROR: Before [{before}] After [{finalPosition}] {snappingError}");
-                this.transform.localPosition = finalPosition;
-                target.GetComponent<Rigidbody>().velocity = finalVel;
+                print($"CORRECTING ERROR {before.position} {after.position} {snappingError}");
+                this.transform.localPosition = after.position;
+                target.GetComponent<Rigidbody>().velocity = after.velocity;
                 if (predictRotation)
                 {
-                    transform.localRotation = finalRot;
-                    trv.angularVelocity = finalAVB;
+                    transform.localRotation = after.rotation;
+                    trv.angularVelocity = after.angVel;
                 }
             }
             else
             {
                 // Afix this position to before!
-                this.transform.localPosition = before;
-                trv.velocity = beforeV;
+                this.transform.localPosition = before.position;
+                trv.velocity = before.velocity;
                 if (predictRotation)
                 {
-                    this.transform.localRotation = beforeR;
-                    trv.angularVelocity = beforeAV;
+                    this.transform.localRotation = before.rotation;
+                    trv.angularVelocity = before.angVel;
                 }
 
                 Vector3 error;
                 Quaternion errorR;
-                int frames = frame_num;
+                int frames = frameSmoothing;
                 while (frames > 0)
                 {
-                    if (rewindID > id)
+                    if (rewindID > serverID)
                     {
                         yield break;
                     }
                     yield return new WaitForEndOfFrame();
-                    error = finalPosition - this.transform.localPosition;
-
+                    // Position correction
+                    error = after.position - this.transform.localPosition;
                     this.transform.localPosition = Vector3.Lerp(
                         this.transform.localPosition,
                         this.transform.localPosition + error,
                         correctionAmount);
-
+                    // Velocity correction
                     target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(
                         target.GetComponent<Rigidbody>().velocity,
-                        finalVel,
+                        after.velocity,
                         correctionAmountVelocities);
                     if (predictRotation)
                     {
-                        errorR = Quaternion.Inverse(this.transform.localRotation) * finalRot;
+                        // Rotation correction
+                        errorR = Quaternion.Inverse(this.transform.localRotation) * after.rotation;
                         this.transform.localRotation = Quaternion.Slerp(
                             this.transform.localRotation,
                             this.transform.localRotation * errorR,
                             correctionAmount);
+                        // Angular rotation correction
                         trv.angularVelocity = Vector3.Lerp(
                             trv.angularVelocity,
-                            finalAVB,
+                            after.angVel,
                             correctionAmountVelocities);
                     }
                     frames -= 1;
                 }
             }
-            #endregion
         }
         #endregion
-        void DoPositionErrorCorrect(double a, TRS_Snapshot snap)
+        void DoPositionErrorCorrect(double a, CSSnapshot snap)
         {
             if (!isLocalPlayer) return;
             // Run difference through some function that adjusts lerp coefficient based off how different you are
             // this.transform.localPosition = snap.position;
-            StartCoroutine(Rewind(snap, a));
+            (CSSnapshot, CSSnapshot) tuple = Rewind(snap, a);
+            CSSnapshot before = tuple.Item1;
+            CSSnapshot after = tuple.Item2;
+            // Remove keys after they are processed...
+            if (KeysToDelete.Contains((uint)a))
+            {
+                KeysToDelete.Remove((uint)a);
+                SnapshotMap.Remove((uint)a);
+            }
+            if (before.Equals(after) && before.Equals(CSSnapshot.Empty()))
+            {
+                return;
+            }
+            float snappingError = (before.position - after.position).magnitude;
+            print($"{a} CORRECTING ERROR {before.position} {after.position} {snappingError}");
+            CSSnapshot correctionDelta = CSSnapshot.Delta(before, after);
+            // simple snapping code
+            if (snappingError > instaSnapError)
+            {
+                this.transform.localPosition += correctionDelta.position;
+                // target.GetComponent<Rigidbody>().velocity = after.velocity;
+            }
         }
         double lastRecievedTime = -1.0;
         [ClientRpc]
-        void RpcRecvPosition(uint id, TRS_Snapshot serverSnap)
+        void RpcRecvPosition(uint id, CSSnapshot serverSnap)
         {
             if (!isLocalPlayer || isServer) return;
-            TRS_Snapshot localSnap;
+            CSSnapshot localSnap;
 
             if (SnapshotMap.TryGetValue(id, out localSnap))
             {
@@ -736,14 +742,14 @@ namespace Mirror
 
                 if (!skip && mgerror > errorMargin)
                 {
-                    // print($"ERROR ON [{id}] My Snapshot {localSnap.position} Server Snapshot {serverSnap.position}");
+                    rewindID = rewindID < id ? id : rewindID;
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else
                 {
-                    //print("Recieved " + id.ToString());
                     // If no errors, means this localSnapshot is okay
                     // Remove this one localSnapshot
+                    print($"No error for ID {id}");
                     int target = -1;
                     uint targetNumber = 0;
                     for (int i = 0; i < ReplayCommands.Count; i++)
@@ -779,6 +785,7 @@ namespace Mirror
                 KeysToDelete.Add(id);
             }
         }
+
 
         void UpdateServerBroadcast()
         {

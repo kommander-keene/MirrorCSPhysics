@@ -72,11 +72,12 @@ public class Controller : NetworkBehaviour, IController
         Vector2 direction = new Vector2(AD, WS);
         if (!determinism)
         {
-            driver.velocity = -driver.transform.up * speed * direction.y + driver.transform.right * speed * direction.x;
+            // driver.velocity = Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x;
+            driver.AddForce(Vector3.forward * speed / 25 * direction.y + Vector3.right * speed / 25 * direction.x, ForceMode.VelocityChange);
         }
         else
         {
-            driver.position += Time.fixedDeltaTime * (-driver.transform.up * speed * direction.y + driver.transform.right * speed * direction.x);
+            driver.position += Time.fixedDeltaTime * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
         }
 
     }
