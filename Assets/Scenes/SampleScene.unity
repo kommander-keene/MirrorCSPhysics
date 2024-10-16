@@ -155,7 +155,7 @@ MonoBehaviour:
   wrap: {fileID: 596982226}
   jitter: 0
   jitterSpeed: 1
-  reliableLatency: 300
+  reliableLatency: 0
   unreliableLoss: 0
   unreliableLatency: 0
   unreliableScramble: 0
@@ -323,7 +323,7 @@ MonoBehaviour:
   sendRate: 30
   offlineScene: 
   onlineScene: 
-  transport: {fileID: 10281875}
+  transport: {fileID: 596982226}
   networkAddress: localhost
   maxConnections: 100
   authenticator: {fileID: 0}

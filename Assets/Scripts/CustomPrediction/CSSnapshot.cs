@@ -24,6 +24,12 @@ public struct CSSnapshot
         futureReferenceIndex = futureRef;
     }
 
+    public override bool Equals(object obj)
+    {
+        CSSnapshot snapshotB = (CSSnapshot)obj;
+        return snapshotB.position.Equals(position) && snapshotB.velocity.Equals(velocity) && snapshotB.rotation.Equals(rotation) && snapshotB.angVel.Equals(angVel);
+    }
+
     /// <summary>
     /// Creates a snapshot representing the delta states between two snapshots in time.
     /// </summary>
@@ -42,6 +48,9 @@ public struct CSSnapshot
         end.rotation * Quaternion.Inverse(start.rotation),
         end.angVel - start.angVel);
     }
+
+
+
 
 
 }

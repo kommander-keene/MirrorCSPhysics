@@ -143,14 +143,13 @@ namespace Mirror
             {
                 // Create and save position in the snapshot map
                 SnapshotMap.Add(seqNumber, snapshot);
-                // Save the positions in my own lists
-                if (ReplayCommands.Count < numberCommands)
-                {
-                    // Increment commands to replay
-                    ReplayCommands.Add(command);
-                }
 
-
+            }
+            // Save the positions in my own lists
+            if (ReplayCommands.Count < numberCommands)
+            {
+                // Increment commands to replay
+                ReplayCommands.Add(command);
             }
         }
         CSSnapshot emergencySnap;
@@ -502,7 +501,6 @@ namespace Mirror
             Vector3 finalVel = serverSnapshot.velocity;
             Vector3 finalAVB = serverSnapshot.angVel;
             Quaternion finalRot = serverSnapshot.rotation;
-            print($"Final position {finalPosition}");
             // print($"Before corrections {serverID}: {before}");
             CSSnapshot lastProcessedSnapshot;
             PrintReplayBuffer(serverID);
@@ -576,26 +574,16 @@ namespace Mirror
                     }
                 }
 
-                CSSnapshot currentSnapshotDelta = CSSnapshot.Delta(lastProcessedSnapshot, clientSnapshot);
-                if (!currentSnapshotDelta.Equals(CSSnapshot.Empty()))
-                {
-                    // Roll-forwards the position
-                    finalPosition += currentSnapshotDelta.position;
-                    finalVel += currentSnapshotDelta.velocity;
-                    finalAVB += currentSnapshotDelta.angVel;
-                    finalRot *= currentSnapshotDelta.rotation;
-                }
+
             }
             else
             {
-                print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
                 // Essentially last run command -> current position since server was instantaneous
+                print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
                 lastProcessedSnapshot = serverSnapshot;
                 ReplayCommands.Clear();
             }
 
-
-            print($"Comparison to last index: Prediction: {lastProcessedSnapshot.position} Client: {finalPosition}");
             CSSnapshot finalSnapshot = new CSSnapshot(finalPosition, finalVel, finalRot, finalAVB);
             return (clientSnapshot, finalSnapshot);
         }
@@ -668,6 +656,11 @@ namespace Mirror
                     }
                     frames -= 1;
                 }
+            }
+            if (ReplayCommands.Count > 0 && !SnapshotMap.ContainsKey(ReplayCommands[^1].seq))
+            {
+                // Create and save position in the snapshot map
+                SnapshotMap.Add(ReplayCommands[^1].seq, CreateNewSnapshot());
             }
         }
         #endregion
