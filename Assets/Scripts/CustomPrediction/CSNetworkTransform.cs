@@ -6,6 +6,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Data.Common;
 using UnityEngine.SceneManagement;
+using Unity.VisualScripting;
+using System.Linq;
 
 namespace Mirror
 {
@@ -42,10 +44,6 @@ namespace Mirror
         HashSet<uint> FastIQKeys;
         HashSet<uint> KeysToDelete;
         Dictionary<uint, CSSnapshot> SnapshotMap;
-        // Stores a list of delta maps.
-        // Key is associated with the earliest timestamp etc... (0: transition from 0-->1)
-        Dictionary<uint, CSSnapshot> DeltaMap;
-
 
         #endregion
 #endif
@@ -107,7 +105,6 @@ namespace Mirror
             currentCmds = new List<InputGroup>();
             ReplayCommands = new List<InputCmd>();
             SnapshotMap = new Dictionary<uint, CSSnapshot>();
-            DeltaMap = new Dictionary<uint, CSSnapshot>();
             InputQueue = new Queue<InputGroup>();
             FastIQKeys = new();
             KeysToDelete = new();
@@ -146,29 +143,6 @@ namespace Mirror
             {
                 // Create and save position in the snapshot map
                 SnapshotMap.Add(seqNumber, snapshot);
-                // Record the difference between position i and i+1
-                if (ReplayCommands.Count > 0)
-                {
-                    print($"Writing to SnapshotMap for {seqNumber}");
-                    uint replayRecent = ReplayCommands[ReplayCommands.Count - 1].seq; // also the early key
-                    if (DeltaMap.ContainsKey(replayRecent))
-                    {
-                        // prevents the system from trying to re-access deleted/processed snapshots
-                        return;
-                    }
-                    CSSnapshot early = SnapshotMap[replayRecent];
-                    CSSnapshot deltaSnapshot = CSSnapshot.Delta(early, snapshot);
-                    if (!DeltaMap.ContainsKey(replayRecent))
-                    {
-                        DeltaMap.Add(replayRecent, deltaSnapshot);
-                    }
-                    // TESTS
-                    if (seqNumber - 1 != replayRecent)
-                    {
-                        Debug.LogWarning($"Creating delta between {seqNumber} and {replayRecent}");
-                    }
-                    Debug.Assert(early.position + deltaSnapshot.position == snapshot.position);
-                }
                 // Save the positions in my own lists
                 if (ReplayCommands.Count < numberCommands)
                 {
@@ -228,6 +202,7 @@ namespace Mirror
                 while (DelayReplyQueue.Count > 0)
                 {
                     DelayReply reply = DelayReplyQueue.Dequeue();
+                    print($"ID {reply.mappingID} with {reply.snapshot.position}");
                     RpcRecvPosition(reply.mappingID, reply.snapshot);
                 }
             }
@@ -512,19 +487,16 @@ namespace Mirror
             }
             var trv = target.GetComponent<Rigidbody>();
             // Save positions before performing corrections
-            Vector3 before = this.transform.localPosition;
+            Vector3 before = target.transform.localPosition;
             Vector3 beforeV = trv.velocity;
             Quaternion beforeR = transform.localRotation;
             Vector3 beforeAV = trv.angularVelocity;
             CSSnapshot clientSnapshot = new(before, beforeV, beforeR, beforeAV);
             // Delta command to the most recent location
-            CSSnapshot currentSnapshotDelta = CSSnapshot.Empty();
-
-
             if (predictRotation)
             {
                 trv.angularVelocity = serverSnapshot.angVel;
-                this.transform.localRotation = serverSnapshot.rotation;
+                target.transform.localRotation = serverSnapshot.rotation;
             }
             // Start movement from last valid positions
             Vector3 finalPosition = serverSnapshot.position;
@@ -533,7 +505,7 @@ namespace Mirror
             Quaternion finalRot = serverSnapshot.rotation;
 
             // print($"Before corrections {serverID}: {before}");
-            CSSnapshot lastProcessedIndex = CSSnapshot.Empty();
+            CSSnapshot lastProcessedSnapshot = CSSnapshot.Empty();
             if (ReplayCommands.Count > 1)
             {
                 // If ReplayCommand is one no need to replay because that's just the base command
@@ -555,54 +527,65 @@ namespace Mirror
                 {
                     return (CSSnapshot.Empty(), CSSnapshot.Empty()); // no point in processing this element
                 }
-                print($"Server Difference {serverID}: {SnapshotMap[(uint)serverID].position - serverSnapshot.position}");
-                lastProcessedIndex = SnapshotMap[ReplayCommands[ReplayCommands.Count - 1].seq];
+                PrintReplayBuffer(serverID);
+                lastProcessedSnapshot = SnapshotMap[ReplayCommands[^1].seq];
+                List<(uint, CSSnapshot)> toUpdate = new List<(uint, CSSnapshot)>();
+
                 while (iteration >= 0 && iteration < ReplayCommands.Count - 1)
                 {
                     // Replay all commands that have not been verified by the server
                     InputCmd recent = ReplayCommands[iteration];
-                    CSSnapshot currentDelta = DeltaMap[recent.seq];
+
+                    CSSnapshot currentDelta = CSSnapshot.Delta(SnapshotMap[recent.seq], SnapshotMap[recent.seq + 1]);
+
                     // Step forward simulation using delta functions
                     finalPosition += currentDelta.position;
                     finalVel += currentDelta.velocity;
                     finalAVB += currentDelta.angVel;
                     finalRot *= currentDelta.rotation;
                     CSSnapshot overwrite = new(finalPosition, finalVel, finalRot, finalAVB);
-                    // print($"Rewinding {recent.seq}->{recent.seq + 1} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
+                    toUpdate.Add((recent.seq + 1, overwrite));
+
+                    print($"Rewinding {recent.seq}->{recent.seq + 1} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
                     iteration += 1;
                 }
-
-                if (toRemove == ReplayCommands.Count - 1)
+                // Second for loop to iterate through the list
+                for (int i = 0; i < toUpdate.Count; i++)
                 {
-                    ReplayCommands.Clear();
-                    DeltaMap.Clear(); // follows ReplayCommands
-                    toRemove = -1;
+                    uint indexID = toUpdate[i].Item1;
+                    CSSnapshot newSnapshot = toUpdate[i].Item2;
+
+                    if (SnapshotMap.ContainsKey(indexID))
+                    {
+                        // Overwrite future snapshots
+                        // TODO Is there some merit to overwriting the future and having this work out perfect?
+                        SnapshotMap[indexID] = newSnapshot;
+                    }
+                    else
+                    {
+                        print($"SnapshotMap does not contain {indexID}");
+                    }
                 }
+                // Remove all replay commands beneath to remove.
 
                 for (int i = 0; i <= toRemove; i++)
                 {
                     if (ReplayCommands.Count > 0)
                     {
                         uint removeID = ReplayCommands[0].seq;
-                        if (DeltaMap.ContainsKey(removeID))
-                        {
-                            DeltaMap.Remove(removeID);
-                        }
                         ReplayCommands.RemoveAt(0); // remove starting from the front
                     }
                 }
-
             }
             else
             {
                 // print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
                 // Essentially last run command -> current position since server was instantaneous
-                lastProcessedIndex = serverSnapshot;
+                lastProcessedSnapshot = serverSnapshot;
                 ReplayCommands.Clear();
-                DeltaMap.Clear(); // follows ReplayCommands
             }
-
-            currentSnapshotDelta = CSSnapshot.Delta(lastProcessedIndex, CreateNewSnapshot());
+            print($"Comparison to last index: Prediction: {lastProcessedSnapshot.position} Client: {finalPosition}");
+            CSSnapshot currentSnapshotDelta = CSSnapshot.Delta(lastProcessedSnapshot, clientSnapshot);
             if (!currentSnapshotDelta.Equals(CSSnapshot.Empty()))
             {
                 // Roll-forwards the position
@@ -611,6 +594,7 @@ namespace Mirror
                 finalAVB += currentSnapshotDelta.angVel;
                 finalRot *= currentSnapshotDelta.rotation;
             }
+
             CSSnapshot finalSnapshot = new CSSnapshot(finalPosition, finalVel, finalRot, finalAVB);
             return (clientSnapshot, finalSnapshot);
         }
@@ -624,11 +608,11 @@ namespace Mirror
                 yield break;
             }
             float snappingError = (before.position - after.position).magnitude;
-            // print($"{serverID} CORRECTING ERROR {before.position} {after.position} {snappingError}");
+            print($"{serverID} CORRECTING ERROR {before.position} {after.position} {snappingError}");
             CSSnapshot correctionDelta = CSSnapshot.Delta(before, after);
             if (snappingError > instaSnapError)
             {
-                this.transform.localPosition += correctionDelta.position;
+                target.transform.localPosition += correctionDelta.position;
                 target.GetComponent<Rigidbody>().velocity += correctionDelta.velocity;
                 if (predictRotation)
                 {
@@ -639,11 +623,11 @@ namespace Mirror
             else
             {
                 // Afix this position to before!
-                this.transform.localPosition = before.position;
+                target.transform.localPosition = before.position;
                 trv.velocity = before.velocity;
                 if (predictRotation)
                 {
-                    this.transform.localRotation = before.rotation;
+                    target.transform.localRotation = before.rotation;
                     trv.angularVelocity = before.angVel;
                 }
 
@@ -658,10 +642,10 @@ namespace Mirror
                     }
                     yield return new WaitForEndOfFrame();
                     // Position correction
-                    error = after.position - this.transform.localPosition;
-                    this.transform.localPosition = Vector3.Lerp(
-                        this.transform.localPosition,
-                        this.transform.localPosition + error,
+                    error = after.position - target.transform.localPosition;
+                    target.transform.localPosition = Vector3.Lerp(
+                        target.transform.localPosition,
+                        target.transform.localPosition + error,
                         correctionAmount);
                     // Velocity correction
                     target.GetComponent<Rigidbody>().velocity = Vector3.Lerp(
@@ -671,10 +655,10 @@ namespace Mirror
                     if (predictRotation)
                     {
                         // Rotation correction
-                        errorR = Quaternion.Inverse(this.transform.localRotation) * after.rotation;
-                        this.transform.localRotation = Quaternion.Slerp(
-                            this.transform.localRotation,
-                            this.transform.localRotation * errorR,
+                        errorR = Quaternion.Inverse(target.transform.localRotation) * after.rotation;
+                        target.transform.localRotation = Quaternion.Slerp(
+                            target.transform.localRotation,
+                            target.transform.localRotation * errorR,
                             correctionAmount);
                         // Angular rotation correction
                         trv.angularVelocity = Vector3.Lerp(
@@ -691,7 +675,7 @@ namespace Mirror
         {
             if (!isLocalPlayer) return;
             // Run difference through some function that adjusts lerp coefficient based off how different you are
-            // this.transform.localPosition = snap.position;
+            // target.transform.localPosition = snap.position;
             (CSSnapshot, CSSnapshot) tuple = Rewind(snap, a);
             CSSnapshot before = tuple.Item1;
             CSSnapshot after = tuple.Item2;
@@ -751,10 +735,6 @@ namespace Mirror
                     {
                         ReplayCommands.RemoveAt(target);
                         // This delta map is being processed and is not used so clear DeltaMap.
-                        if (DeltaMap.ContainsKey(targetNumber))
-                        {
-                            DeltaMap.Remove(targetNumber);
-                        }
                     }
 
                 }
