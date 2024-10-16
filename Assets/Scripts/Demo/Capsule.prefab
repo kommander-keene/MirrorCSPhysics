@@ -191,7 +191,7 @@ MonoBehaviour:
   frameSmoothing: 2
   predictRotation: 0
   broadcastInterval: 0.016666668
-  replyInterval: 0.016666668
+  replyInterval: 0.033333335
   errorMargin: 0
   correctionAmount: 0
   correctionAmountVelocities: 0

@@ -444,7 +444,6 @@ namespace Mirror
                     SnapAndSave(currentCmd.seq, sn, currentCmd);
                     //print("Sent: " + toSendCmd.Recent().seq + $"({toSendCmd.Recent().ticks}) Rec: " + sn.position);
                     CmdUpdateInputLists(toSendCmd, toSendCmd.Recent().seq);
-
                     deltaCmdCount = 0;
                     validCmd = false;
                 }
@@ -503,9 +502,11 @@ namespace Mirror
             Vector3 finalVel = serverSnapshot.velocity;
             Vector3 finalAVB = serverSnapshot.angVel;
             Quaternion finalRot = serverSnapshot.rotation;
-
+            print($"Final position {finalPosition}");
             // print($"Before corrections {serverID}: {before}");
-            CSSnapshot lastProcessedSnapshot = CSSnapshot.Empty();
+            CSSnapshot lastProcessedSnapshot;
+            PrintReplayBuffer(serverID);
+
             if (ReplayCommands.Count > 1)
             {
                 // If ReplayCommand is one no need to replay because that's just the base command
@@ -521,16 +522,14 @@ namespace Mirror
                     }
                 }
                 int iteration = toRemove;
-                // Ex: I had a list with IDs: [2, 3, 4]
-                // DeltaMap[0]{2->3} + DeltaMap[1]{3->4} + {4->Now}
                 if (toRemove < 0)
                 {
                     return (CSSnapshot.Empty(), CSSnapshot.Empty()); // no point in processing this element
                 }
-                PrintReplayBuffer(serverID);
                 lastProcessedSnapshot = SnapshotMap[ReplayCommands[^1].seq];
-                List<(uint, CSSnapshot)> toUpdate = new List<(uint, CSSnapshot)>();
 
+                // print($"difference between start and snapshot end? {lastProcessedSnapshot.position - clientSnapshot.position}");
+                List<(uint, CSSnapshot)> toUpdate = new();
                 while (iteration >= 0 && iteration < ReplayCommands.Count - 1)
                 {
                     // Replay all commands that have not been verified by the server
@@ -545,11 +544,10 @@ namespace Mirror
                     finalRot *= currentDelta.rotation;
                     CSSnapshot overwrite = new(finalPosition, finalVel, finalRot, finalAVB);
                     toUpdate.Add((recent.seq + 1, overwrite));
-
-                    print($"Rewinding {recent.seq}->{recent.seq + 1} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
+                    print($"Rewinding {recent.seq}->{recent.seq + 1} {currentDelta.position} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
                     iteration += 1;
                 }
-                // Second for loop to iterate through the list
+                // Update the snapshotmap to contain updates lest we face exponential blowup
                 for (int i = 0; i < toUpdate.Count; i++)
                 {
                     uint indexID = toUpdate[i].Item1;
@@ -573,31 +571,31 @@ namespace Mirror
                     {
 
                         uint removeID = ReplayCommands[0].seq;
-                        print($"removing " + removeID);
                         ReplayCommands.RemoveAt(0); // remove starting from the front
 
                     }
                 }
 
+                CSSnapshot currentSnapshotDelta = CSSnapshot.Delta(lastProcessedSnapshot, clientSnapshot);
+                if (!currentSnapshotDelta.Equals(CSSnapshot.Empty()))
+                {
+                    // Roll-forwards the position
+                    finalPosition += currentSnapshotDelta.position;
+                    finalVel += currentSnapshotDelta.velocity;
+                    finalAVB += currentSnapshotDelta.angVel;
+                    finalRot *= currentSnapshotDelta.rotation;
+                }
             }
             else
             {
-                // print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
+                print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
                 // Essentially last run command -> current position since server was instantaneous
                 lastProcessedSnapshot = serverSnapshot;
                 ReplayCommands.Clear();
             }
-            print($"Comparison to last index: Prediction: {lastProcessedSnapshot.position} Client: {finalPosition}");
-            CSSnapshot currentSnapshotDelta = CSSnapshot.Delta(lastProcessedSnapshot, clientSnapshot);
-            if (!currentSnapshotDelta.Equals(CSSnapshot.Empty()))
-            {
-                // Roll-forwards the position
-                finalPosition += currentSnapshotDelta.position;
-                finalVel += currentSnapshotDelta.velocity;
-                finalAVB += currentSnapshotDelta.angVel;
-                finalRot *= currentSnapshotDelta.rotation;
-            }
 
+
+            print($"Comparison to last index: Prediction: {lastProcessedSnapshot.position} Client: {finalPosition}");
             CSSnapshot finalSnapshot = new CSSnapshot(finalPosition, finalVel, finalRot, finalAVB);
             return (clientSnapshot, finalSnapshot);
         }
@@ -607,7 +605,6 @@ namespace Mirror
 
             if (rewindID > serverID)
             {
-                print("NOPE");
                 yield break;
             }
             float snappingError = (before.position - after.position).magnitude;
@@ -715,6 +712,7 @@ namespace Mirror
                 if (!skip && mgerror > errorMargin)
                 {
                     rewindID = rewindID < id ? id : rewindID;
+                    print($"CORRECTING NEEDED {id} S {serverSnap.position} C {localSnap.position}");
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else
