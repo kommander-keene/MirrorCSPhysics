@@ -567,15 +567,18 @@ namespace Mirror
                     }
                 }
                 // Remove all replay commands beneath to remove.
-
-                for (int i = 0; i <= toRemove; i++)
+                if (ReplayCommands.Count > 0)
                 {
-                    if (ReplayCommands.Count > 0)
+                    for (int i = 0; i <= toRemove; i++)
                     {
+
                         uint removeID = ReplayCommands[0].seq;
+                        print($"removing " + removeID);
                         ReplayCommands.RemoveAt(0); // remove starting from the front
+
                     }
                 }
+
             }
             else
             {
@@ -718,25 +721,16 @@ namespace Mirror
                 {
                     // If no errors, means this localSnapshot is okay
                     // Remove this one localSnapshot
-                    print($"No error for ID {id}");
-                    int target = -1;
-                    uint targetNumber = 0;
                     for (int i = 0; i < ReplayCommands.Count; i++)
                     {
                         if (ReplayCommands[i].seq == id)
                         {
-                            target = i;
-                            targetNumber = ReplayCommands[i].seq;
+                            ReplayCommands.RemoveAt(i);
                             break;
                         }
+                        print($"{ReplayCommands[i].seq} {id}");
                     }
                     rewindID = rewindID < id ? id : rewindID;
-                    if (target > 0)
-                    {
-                        ReplayCommands.RemoveAt(target);
-                        // This delta map is being processed and is not used so clear DeltaMap.
-                    }
-
                 }
                 // Perform an error check, and if not, correct.
                 // To correct, just lerp between current position and hypothetical position
