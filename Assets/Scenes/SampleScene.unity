@@ -155,7 +155,7 @@ MonoBehaviour:
   wrap: {fileID: 596982226}
   jitter: 0
   jitterSpeed: 1
-  reliableLatency: 300
+  reliableLatency: 50
   unreliableLoss: 0
   unreliableLatency: 0
   unreliableScramble: 0

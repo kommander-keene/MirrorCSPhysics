@@ -144,9 +144,25 @@ namespace Mirror
             {
                 // Create and save position in the snapshot map
                 print($"A. WRITING SNAPSHOT {snapshot.position} at {seqNumber}");
-                SnapshotMap.Add(seqNumber, snapshot);
                 // There is a state that needs to update.
+                if (runningSnapshotUpdates.Count > 0)
+                {
+                    CSSnapshot updatingDelta = CSSnapshot.Delta(SnapshotMap[seqNumber - 1], snapshot);
+                    // there is an update currently in the process of being made...
+                    CSSnapshot runningAddition = CSSnapshot.Update(runningSnapshotUpdates[^1].Item2, updatingDelta);
+                    if (runningSeqNumbers.ContainsKey(seqNumber))
+                    {
+                        runningSnapshotUpdates[runningSeqNumbers[seqNumber]] = ((seqNumber, runningAddition));
+                    }
+                    else
+                    {
+                        runningSnapshotUpdates.Add((seqNumber, runningAddition));
+                        runningSeqNumbers.Add(seqNumber, runningSnapshotUpdates.Count - 1);
+                    }
 
+                    print($"5. CORRECTED FUTURE {seqNumber}: {runningAddition.position}");
+                }
+                SnapshotMap.Add(seqNumber, snapshot);
             }
             else
             {
@@ -481,14 +497,14 @@ namespace Mirror
             print($"2. BUFFER SIZE {id} vs {rewindID}, buffer contains [{elements}]");
         }
         double rewindID;
-        private (CSSnapshot, CSSnapshot) Rewind(CSSnapshot serverSnapshot, double serverID)
+        private (CSSnapshot, CSSnapshot, uint) Rewind(CSSnapshot serverSnapshot, double serverID)
         {
 
             if (ReplayCommands.Count == 0)
             {
                 // Either nothing to replay
                 // or recieved ID has already be thrown away (old)
-                return (CSSnapshot.Empty(), CSSnapshot.Empty());
+                return (CSSnapshot.Empty(), CSSnapshot.Empty(), 0);
             }
             var trv = target.GetComponent<Rigidbody>();
             // Save positions before performing corrections
@@ -509,9 +525,8 @@ namespace Mirror
             Vector3 finalAVB = serverSnapshot.angVel;
             Quaternion finalRot = serverSnapshot.rotation;
             // print($"Before corrections {serverID}: {before}");
-            CSSnapshot lastProcessedSnapshot;
             PrintReplayBuffer(serverID);
-
+            uint updateID = (uint)serverID;
             if (ReplayCommands.Count > 1)
             {
                 // If ReplayCommand is one no need to replay because that's just the base command
@@ -529,10 +544,8 @@ namespace Mirror
                 int iteration = toRemove;
                 if (toRemove < 0)
                 {
-                    return (CSSnapshot.Empty(), CSSnapshot.Empty()); // no point in processing this element
+                    return (CSSnapshot.Empty(), CSSnapshot.Empty(), 0); // no point in processing this element
                 }
-                lastProcessedSnapshot = SnapshotMap[ReplayCommands[^1].seq];
-
                 // print($"difference between start and snapshot end? {lastProcessedSnapshot.position - clientSnapshot.position}");
                 List<(uint, CSSnapshot)> toUpdate = new();
                 while (iteration >= 0 && iteration < ReplayCommands.Count - 1)
@@ -551,6 +564,7 @@ namespace Mirror
                     toUpdate.Add((recent.seq + 1, overwrite));
                     print($"Rewinding {recent.seq}->{recent.seq + 1} D:[{currentDelta.position}]  {finalPosition}");
                     iteration += 1;
+                    updateID += 1; // updates
                 }
                 // Update the snapshotmap to contain updates lest we face exponential blowup
                 for (int i = 0; i < toUpdate.Count; i++)
@@ -576,21 +590,20 @@ namespace Mirror
                         ReplayCommands.RemoveAt(0); // remove starting from the front
                     }
                 }
-
-
             }
             else
             {
                 // Essentially last run command -> current position since server was instantaneous
                 print($"2. {serverID} No simulation ME {clientSnapshot.position} vs SERVER {serverSnapshot.position}");
-                lastProcessedSnapshot = serverSnapshot;
                 ReplayCommands.Clear();
             }
 
             CSSnapshot finalSnapshot = new CSSnapshot(finalPosition, finalVel, finalRot, finalAVB);
-            return (clientSnapshot, finalSnapshot);
+            return (clientSnapshot, finalSnapshot, updateID);
         }
-        private IEnumerator Reconcile(CSSnapshot before, CSSnapshot after, double serverID)
+        Dictionary<uint, int> runningSeqNumbers = new(); // seqNumbers and their IDs
+        List<(uint, CSSnapshot)> runningSnapshotUpdates = new(); // forwarded snapshot updates
+        private IEnumerator Reconcile(CSSnapshot before, CSSnapshot after, double serverID, uint afterID)
         {
             var trv = target.GetComponent<Rigidbody>();
 
@@ -599,20 +612,57 @@ namespace Mirror
                 yield break;
             }
             float snappingError = (before.position - after.position).magnitude;
-            CSSnapshot correctionDelta = CSSnapshot.Delta(before, after);
-            lastCorrectedState = after;
             if (snappingError > instaSnapError)
             {
-                yield return new WaitForFixedUpdate(); // rigidbodies don't update instantly
+                // Keep track of changes
+                if (!runningSeqNumbers.ContainsKey(afterID))
+                {
+                    runningSnapshotUpdates.Add((afterID, after)); // Add after as the first updated position n stuff
+                    runningSeqNumbers.Add(afterID, 0);
+                }
+                else
+                {
+                    // Update to newest
+                    runningSnapshotUpdates[runningSeqNumbers[afterID]] = (afterID, after);
+                }
 
-                print($"4. {serverID} CORRECTING ERROR B: [{this.transform.localPosition}] A:[{after.position}] {snappingError}");
-                target.transform.localPosition += correctionDelta.position;
-                target.GetComponent<Rigidbody>().velocity += correctionDelta.velocity;
+                yield return new WaitForFixedUpdate(); // rigidbodies don't update instantly
+                if (runningSnapshotUpdates.Count == 0)
+                {
+                    print("4. BOO HOO");
+                    // This breaks out. Don't clear the outputs just in case I need it.
+                    // This will either only contain super old stuff, or stuff that is as updated as possible!
+                    yield break;
+                }
+                // Update snapshot maps
+                for (int i = 0; i < runningSnapshotUpdates.Count; i++)
+                {
+                    uint seq = runningSnapshotUpdates[i].Item1;
+                    CSSnapshot update = runningSnapshotUpdates[i].Item2;
+                    if (SnapshotMap.ContainsKey(seq))
+                    {
+                        print($"Updating Key for {seq} {update.position}");
+                        SnapshotMap[seq] = update;
+                    }
+                    else
+                    {
+                        // Not being in the queue means its either GONE or its SHIT
+                        Debug.LogWarning($"{seq} does not exist in SnapshotMap?");
+                    }
+                }
+                print($"4. CORRECTING {serverID}: {snappingError}");
+                // Save latest position
+                CSSnapshot forwardedCorrectedPosition = runningSnapshotUpdates[^1].Item2;
+                target.transform.localPosition = forwardedCorrectedPosition.position;
+                target.GetComponent<Rigidbody>().velocity = forwardedCorrectedPosition.velocity;
                 if (predictRotation)
                 {
-                    transform.localRotation *= correctionDelta.rotation;
-                    trv.angularVelocity += correctionDelta.angVel;
+                    transform.localRotation = forwardedCorrectedPosition.rotation;
+                    trv.angularVelocity = forwardedCorrectedPosition.angVel;
                 }
+                // Clear forward paths
+                runningSnapshotUpdates.Clear();
+                runningSeqNumbers.Clear();
             }
             else
             {
@@ -670,9 +720,10 @@ namespace Mirror
             if (!isLocalPlayer) return;
             // Run difference through some function that adjusts lerp coefficient based off how different you are
             // target.transform.localPosition = snap.position;
-            (CSSnapshot, CSSnapshot) tuple = Rewind(snap, a);
+            (CSSnapshot, CSSnapshot, uint) tuple = Rewind(snap, a);
             CSSnapshot before = tuple.Item1;
             CSSnapshot after = tuple.Item2;
+            uint updateID = tuple.Item3;
             // Remove keys after they are processed...
             if (KeysToDelete.Contains((uint)a))
             {
@@ -683,7 +734,7 @@ namespace Mirror
             {
                 return;
             }
-            StartCoroutine(Reconcile(before, after, a));
+            StartCoroutine(Reconcile(before, after, a, updateID));
         }
         double lastRecievedTime = -1.0;
         [ClientRpc]

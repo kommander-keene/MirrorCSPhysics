@@ -48,7 +48,24 @@ public struct CSSnapshot
         end.rotation * Quaternion.Inverse(start.rotation),
         end.angVel - start.angVel);
     }
-
+    /// <summary>
+    /// Adds snapshot A and B to perform
+    /// </summary>
+    /// <param name="A"></param>
+    /// <param name="B"></param>
+    /// <returns></returns>
+    public static CSSnapshot Update(CSSnapshot A, CSSnapshot B)
+    {
+        if (A.Equals(B) && A.Equals(Empty()))
+        {
+            return Empty();
+        }
+        return new CSSnapshot(
+        A.position + B.position,
+        A.velocity + B.velocity,
+        A.rotation * B.rotation,
+        A.angVel + B.angVel);
+    }
 
 
 

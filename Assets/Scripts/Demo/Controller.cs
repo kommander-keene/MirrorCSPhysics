@@ -78,9 +78,9 @@ public class Controller : NetworkBehaviour, IController
         }
         else
         {
-            print($"Z1: PRE MOVEMENT! {transform.position}");
-            transform.position += Time.fixedDeltaTime * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
-            print($"Z2: APPLYING MOVEMENT! {transform.position}");
+            // print($"Z1: PRE MOVEMENT! {transform.position}");
+            driver.position += Time.fixedDeltaTime * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
+            // print($"Z2: APPLYING MOVEMENT! {transform.position}");
         }
 
     }
