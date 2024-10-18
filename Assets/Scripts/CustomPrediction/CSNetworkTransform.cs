@@ -139,11 +139,18 @@ namespace Mirror
         }
         void SnapAndSave(uint seqNumber, CSSnapshot snapshot, InputCmd command)
         {
+
             if (!SnapshotMap.ContainsKey(seqNumber))
             {
                 // Create and save position in the snapshot map
+                print($"A. WRITING SNAPSHOT {snapshot.position} at {seqNumber}");
                 SnapshotMap.Add(seqNumber, snapshot);
+                // There is a state that needs to update.
 
+            }
+            else
+            {
+                Debug.LogWarning($"Failing to add {seqNumber} to SnapshotMap");
             }
             // Save the positions in my own lists
             if (ReplayCommands.Count < numberCommands)
@@ -471,7 +478,7 @@ namespace Mirror
             {
                 elements += command.seq + ", ";
             }
-            print($"Start at {id} vs {rewindID}, buffer contains [{elements}]");
+            print($"2. BUFFER SIZE {id} vs {rewindID}, buffer contains [{elements}]");
         }
         double rewindID;
         private (CSSnapshot, CSSnapshot) Rewind(CSSnapshot serverSnapshot, double serverID)
@@ -542,7 +549,7 @@ namespace Mirror
                     finalRot *= currentDelta.rotation;
                     CSSnapshot overwrite = new(finalPosition, finalVel, finalRot, finalAVB);
                     toUpdate.Add((recent.seq + 1, overwrite));
-                    print($"Rewinding {recent.seq}->{recent.seq + 1} {currentDelta.position} {finalPosition} Expected: {SnapshotMap[recent.seq + 1].position}");
+                    print($"Rewinding {recent.seq}->{recent.seq + 1} D:[{currentDelta.position}]  {finalPosition}");
                     iteration += 1;
                 }
                 // Update the snapshotmap to contain updates lest we face exponential blowup
@@ -554,7 +561,6 @@ namespace Mirror
                     if (SnapshotMap.ContainsKey(indexID))
                     {
                         // Overwrite future snapshots
-                        // TODO Is there some merit to overwriting the future and having this work out perfect?
                         SnapshotMap[indexID] = newSnapshot;
                     }
                     else
@@ -567,10 +573,7 @@ namespace Mirror
                 {
                     for (int i = 0; i <= toRemove; i++)
                     {
-
-                        uint removeID = ReplayCommands[0].seq;
                         ReplayCommands.RemoveAt(0); // remove starting from the front
-
                     }
                 }
 
@@ -579,7 +582,7 @@ namespace Mirror
             else
             {
                 // Essentially last run command -> current position since server was instantaneous
-                print($"{serverID} No simulation {clientSnapshot.position} vs {serverSnapshot.position}");
+                print($"2. {serverID} No simulation ME {clientSnapshot.position} vs SERVER {serverSnapshot.position}");
                 lastProcessedSnapshot = serverSnapshot;
                 ReplayCommands.Clear();
             }
@@ -596,10 +599,13 @@ namespace Mirror
                 yield break;
             }
             float snappingError = (before.position - after.position).magnitude;
-            print($"{serverID} CORRECTING ERROR {before.position} {after.position} {snappingError}");
             CSSnapshot correctionDelta = CSSnapshot.Delta(before, after);
+            lastCorrectedState = after;
             if (snappingError > instaSnapError)
             {
+                yield return new WaitForFixedUpdate(); // rigidbodies don't update instantly
+
+                print($"4. {serverID} CORRECTING ERROR B: [{this.transform.localPosition}] A:[{after.position}] {snappingError}");
                 target.transform.localPosition += correctionDelta.position;
                 target.GetComponent<Rigidbody>().velocity += correctionDelta.velocity;
                 if (predictRotation)
@@ -657,11 +663,6 @@ namespace Mirror
                     frames -= 1;
                 }
             }
-            if (ReplayCommands.Count > 0 && !SnapshotMap.ContainsKey(ReplayCommands[^1].seq))
-            {
-                // Create and save position in the snapshot map
-                SnapshotMap.Add(ReplayCommands[^1].seq, CreateNewSnapshot());
-            }
         }
         #endregion
         void DoPositionErrorCorrect(double a, CSSnapshot snap)
@@ -705,7 +706,7 @@ namespace Mirror
                 if (!skip && mgerror > errorMargin)
                 {
                     rewindID = rewindID < id ? id : rewindID;
-                    print($"CORRECTING NEEDED {id} S {serverSnap.position} C {localSnap.position}");
+                    print($"1. STARTING CORRECTION {id} SERVER [{serverSnap.position}] CLIENT [{localSnap.position}]");
                     DoPositionErrorCorrect(id, serverSnap);
                 }
                 else

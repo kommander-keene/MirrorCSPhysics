@@ -47,7 +47,9 @@ public class Controller : NetworkBehaviour, IController
             cmd.axis2 = WS;
             cmd.axis3 = J;
             time_run2 += 1;
+
             Walk(AD, WS, J); // Effects Local Client
+
             netCmdMg.InputDown(cmd);
         }
         else if (!hasInput())
@@ -76,7 +78,9 @@ public class Controller : NetworkBehaviour, IController
         }
         else
         {
-            driver.position += Time.fixedDeltaTime * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
+            print($"Z1: PRE MOVEMENT! {transform.position}");
+            transform.position += Time.fixedDeltaTime * (Vector3.forward * speed * direction.y + Vector3.right * speed * direction.x);
+            print($"Z2: APPLYING MOVEMENT! {transform.position}");
         }
 
     }
